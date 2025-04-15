@@ -72,6 +72,13 @@ class RealTimePlotWidget(QWidget):
     
     def __init__(self, parent=None):
         super().__init__(parent)
+        
+        # Ensure we have a QApplication instance
+        if QApplication.instance() is None:
+            self.app = QApplication(sys.argv)
+        else:
+            self.app = QApplication.instance()
+            
         self.max_points = 1000
         
         # Initialize data arrays
@@ -88,8 +95,10 @@ class RealTimePlotWidget(QWidget):
         # For Google Maps
         self.maps_html = None
         
-        # Create layout
-        layout = QGridLayout(self)
+        # Create main layout for the widget
+        self.layout = QGridLayout(self)
+        self.layout.setContentsMargins(10, 10, 10, 10)
+        self.layout.setSpacing(10)
         
         # Setup plot windows
         self.setup_windows()
@@ -97,34 +106,29 @@ class RealTimePlotWidget(QWidget):
     def setup_windows(self):
         """Set up all visualization windows and layouts."""
         try:
-            # Create layout
-            layout = QGridLayout()
-            layout.setContentsMargins(10, 10, 10, 10)
-            layout.setSpacing(10)
-            
             # Create altitude plot
-            self.altitude_plot = pg.PlotWidget(title="Altitude")
+            self.altitude_plot = pg.PlotWidget(title="Altitude", parent=self)
             self.altitude_plot.setLabel('left', 'Altitude', units='m')
             self.altitude_plot.setLabel('bottom', 'Time', units='s')
             self.altitude_plot.showGrid(x=True, y=True)
             self.altitude_curve = self.altitude_plot.plot(pen=pg.mkPen('b', width=2))
             
             # Create pressure plot
-            self.pressure_plot = pg.PlotWidget(title="Pressure")
+            self.pressure_plot = pg.PlotWidget(title="Pressure", parent=self)
             self.pressure_plot.setLabel('left', 'Pressure', units='hPa')
             self.pressure_plot.setLabel('bottom', 'Time', units='s')
             self.pressure_plot.showGrid(x=True, y=True)
             self.pressure_curve = self.pressure_plot.plot(pen=pg.mkPen('r', width=2))
             
             # Create temperature plot
-            self.temperature_plot = pg.PlotWidget(title="Temperature")
+            self.temperature_plot = pg.PlotWidget(title="Temperature", parent=self)
             self.temperature_plot.setLabel('left', 'Temperature', units='°C')
             self.temperature_plot.setLabel('bottom', 'Time', units='s')
             self.temperature_plot.showGrid(x=True, y=True)
             self.temperature_curve = self.temperature_plot.plot(pen=pg.mkPen('g', width=2))
             
             # Create motion sensors plot
-            self.motion_plot = pg.PlotWidget(title="Motion Sensors")
+            self.motion_plot = pg.PlotWidget(title="Motion Sensors", parent=self)
             self.motion_plot.setLabel('left', 'Value')
             self.motion_plot.setLabel('bottom', 'Time', units='s')
             self.motion_plot.showGrid(x=True, y=True)
@@ -139,9 +143,8 @@ class RealTimePlotWidget(QWidget):
             self.gyro_z_curve = self.motion_plot.plot(pen=pg.mkPen('b', width=2, style=Qt.DashLine), name="Gyro Z")
             
             # Create 3D attitude view
-            self.attitude_view = gl.GLViewWidget()
+            self.attitude_view = gl.GLViewWidget(parent=self)
             self.attitude_view.setCameraPosition(distance=15, elevation=30, azimuth=45)
-            self.attitude_view.setWindowTitle('3D Attitude')
             
             # Add coordinate grid
             grid = gl.GLGridItem()
@@ -166,8 +169,7 @@ class RealTimePlotWidget(QWidget):
             # Create map view for GPS
             try:
                 from PyQt5.QtWebEngineWidgets import QWebEngineView
-                self.map_view = QWebEngineView()
-                self.map_view.setWindowTitle('GPS Trajectory')
+                self.map_view = QWebEngineView(parent=self)
                 
                 # HTML for a simple Google Maps view
                 html = """
@@ -206,30 +208,39 @@ class RealTimePlotWidget(QWidget):
                 self.map_view.setHtml(html)
             except ImportError:
                 print("QWebEngineView not available, using placeholder for GPS view")
-                self.map_view = QWidget()
+                self.map_view = QWidget(parent=self)
                 placeholder_layout = QVBoxLayout(self.map_view)
                 placeholder_label = QLabel("GPS View (Web Engine not available)")
                 placeholder_layout.addWidget(placeholder_label)
             
-            # Add all widgets to layout
-            layout.addWidget(self.altitude_plot, 0, 0)
-            layout.addWidget(self.pressure_plot, 1, 0)
-            layout.addWidget(self.temperature_plot, 2, 0)
-            layout.addWidget(self.motion_plot, 3, 0)
-            layout.addWidget(self.map_view, 0, 1)
-            layout.addWidget(self.attitude_view, 1, 1, 3, 1)  # Span 3 rows
+            # Add all widgets to the main layout
+            self.layout.addWidget(self.altitude_plot, 0, 0)
+            self.layout.addWidget(self.pressure_plot, 1, 0)
+            self.layout.addWidget(self.temperature_plot, 2, 0)
+            self.layout.addWidget(self.motion_plot, 3, 0)
+            self.layout.addWidget(self.map_view, 0, 1)
+            self.layout.addWidget(self.attitude_view, 1, 1, 3, 1)  # Span 3 rows
             
             # Set column stretch factors (make right column larger)
-            layout.setColumnStretch(0, 1)
-            layout.setColumnStretch(1, 2)
-            
-            # Set layout to the widget
-            self.setLayout(layout)
+            self.layout.setColumnStretch(0, 1)
+            self.layout.setColumnStretch(1, 2)
             
             # Set up timer for updates
             self.timer = QTimer()
             self.timer.timeout.connect(self.update_plots)
             self.timer.start(50)  # Update at 20 Hz
+            
+            # Make sure all widgets are visible
+            self.altitude_plot.show()
+            self.pressure_plot.show()
+            self.temperature_plot.show()
+            self.motion_plot.show()
+            self.map_view.show()
+            self.attitude_view.show()
+            
+            # Initial update to make plots visible
+            self.update()
+            self.app.processEvents()
             
         except Exception as e:
             print(f"Error setting up windows: {e}")
@@ -282,12 +293,15 @@ class RealTimePlotWidget(QWidget):
             self.temperature_curve.setData(self.timestamps, self.temperatures)
             
             # Update motion plots
-            self.accel_x_curve.setData(self.timestamps, self.accelerations[:, 0])
-            self.accel_y_curve.setData(self.timestamps, self.accelerations[:, 1])
-            self.accel_z_curve.setData(self.timestamps, self.accelerations[:, 2])
-            self.gyro_x_curve.setData(self.timestamps, self.gyros[:, 0])
-            self.gyro_y_curve.setData(self.timestamps, self.gyros[:, 1])
-            self.gyro_z_curve.setData(self.timestamps, self.gyros[:, 2])
+            if len(self.accelerations) > 0:
+                self.accel_x_curve.setData(self.timestamps, self.accelerations[:, 0])
+                self.accel_y_curve.setData(self.timestamps, self.accelerations[:, 1])
+                self.accel_z_curve.setData(self.timestamps, self.accelerations[:, 2])
+            
+            if len(self.gyros) > 0:
+                self.gyro_x_curve.setData(self.timestamps, self.gyros[:, 0])
+                self.gyro_y_curve.setData(self.timestamps, self.gyros[:, 1])
+                self.gyro_z_curve.setData(self.timestamps, self.gyros[:, 2])
             
             # Update 3D attitude if we have quaternion data
             if len(self.quaternions) > 0 and self.aircraft is not None:
@@ -299,8 +313,20 @@ class RealTimePlotWidget(QWidget):
                 
                 # Apply rotation to the aircraft model
                 self.aircraft.setTransform(pg.Transform3D(R))
+            
+            # Force update of all plot widgets
+            self.altitude_plot.update()
+            self.pressure_plot.update()
+            self.temperature_plot.update()
+            self.motion_plot.update()
+            self.attitude_view.update()
+            
+            # Process the application events to ensure plots are refreshed
+            self.app.processEvents()
+            
         except Exception as e:
             print(f"Error updating plots: {e}")
+            traceback.print_exc()
 
     def quaternion_to_rotation_matrix(self, q):
         """Convert quaternion to rotation matrix."""
@@ -434,6 +460,9 @@ class RealTimePlotWidget(QWidget):
             # Update Google Maps if we have GPS data
             if len(self.latitudes) > 0 and len(self.longitudes) > 0:
                 self.update_map()
+            
+            # Explicitly update the plots
+            self.update_plots()
             
             print(f"Data arrays updated: timestamps length = {len(self.timestamps)}")
             print(f"All plots updated successfully")
