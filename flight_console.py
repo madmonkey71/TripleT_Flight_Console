@@ -92,6 +92,11 @@ class RealTimePlotWidget(QWidget):
         self.gyros = np.array([]).reshape(0, 3)
         self.quaternions = np.array([]).reshape(0, 4)
         
+        # For storing current values for text display
+        self.current_sats = 0
+        self.current_speed = 0
+        self.current_heading = 0
+        
         # For Google Maps
         self.maps_html = None
         
@@ -106,6 +111,35 @@ class RealTimePlotWidget(QWidget):
     def setup_windows(self):
         """Set up all visualization windows and layouts."""
         try:
+            # Create info panel for displaying data values
+            self.info_panel = QWidget(self)
+            info_layout = QHBoxLayout(self.info_panel)
+            info_layout.setContentsMargins(5, 5, 5, 5)
+            info_layout.setSpacing(20)
+            
+            # Add satellite info
+            sat_label = QLabel("Satellites:", self.info_panel)
+            sat_label.setStyleSheet("font-weight: bold;")
+            self.sat_value = QLabel("0", self.info_panel)
+            info_layout.addWidget(sat_label)
+            info_layout.addWidget(self.sat_value)
+            
+            # Add speed info
+            speed_label = QLabel("Speed (km/h):", self.info_panel)
+            speed_label.setStyleSheet("font-weight: bold;")
+            self.speed_value = QLabel("0.0", self.info_panel)
+            info_layout.addWidget(speed_label)
+            info_layout.addWidget(self.speed_value)
+            
+            # Add heading info
+            heading_label = QLabel("Heading (°):", self.info_panel)
+            heading_label.setStyleSheet("font-weight: bold;")
+            self.heading_value = QLabel("0.0", self.info_panel)
+            info_layout.addWidget(heading_label)
+            info_layout.addWidget(self.heading_value)
+            
+            info_layout.addStretch(1)
+            
             # Create altitude plot
             self.altitude_plot = pg.PlotWidget(title="Altitude", parent=self)
             self.altitude_plot.setLabel('left', 'Altitude', units='m')
@@ -214,12 +248,18 @@ class RealTimePlotWidget(QWidget):
                 placeholder_layout.addWidget(placeholder_label)
             
             # Add all widgets to the main layout
-            self.layout.addWidget(self.altitude_plot, 0, 0)
-            self.layout.addWidget(self.pressure_plot, 1, 0)
-            self.layout.addWidget(self.temperature_plot, 2, 0)
-            self.layout.addWidget(self.motion_plot, 3, 0)
-            self.layout.addWidget(self.map_view, 0, 1)
-            self.layout.addWidget(self.attitude_view, 1, 1, 3, 1)  # Span 3 rows
+            # First row is info panel spanning all columns
+            self.layout.addWidget(self.info_panel, 0, 0, 1, 2)
+            
+            # Left column - stacked plots
+            self.layout.addWidget(self.altitude_plot, 1, 0)
+            self.layout.addWidget(self.pressure_plot, 2, 0)
+            self.layout.addWidget(self.temperature_plot, 3, 0)
+            self.layout.addWidget(self.motion_plot, 4, 0)
+            
+            # Right column - Map and 3D view (each taking 2 rows)
+            self.layout.addWidget(self.map_view, 1, 1, 2, 1)  # Span 2 rows to make it larger
+            self.layout.addWidget(self.attitude_view, 3, 1, 2, 1)  # Span 2 rows
             
             # Set column stretch factors (make right column larger)
             self.layout.setColumnStretch(0, 1)
@@ -231,6 +271,7 @@ class RealTimePlotWidget(QWidget):
             self.timer.start(50)  # Update at 20 Hz
             
             # Make sure all widgets are visible
+            self.info_panel.show()
             self.altitude_plot.show()
             self.pressure_plot.show()
             self.temperature_plot.show()
@@ -444,6 +485,19 @@ class RealTimePlotWidget(QWidget):
                 new_quat = self.quaternions[-1]
             
             self.quaternions = np.vstack([self.quaternions, new_quat]) if len(self.quaternions) > 0 else np.array([new_quat])
+            
+            # Update text display data
+            if 'Sats' in data_point and data_point['Sats'] is not None:
+                self.current_sats = int(float(data_point['Sats']))
+                self.sat_value.setText(str(self.current_sats))
+                
+            if 'Speed' in data_point and data_point['Speed'] is not None:
+                self.current_speed = float(data_point['Speed'])
+                self.speed_value.setText(f"{self.current_speed:.2f}")
+                
+            if 'Heading' in data_point and data_point['Heading'] is not None:
+                self.current_heading = float(data_point['Heading'])
+                self.heading_value.setText(f"{self.current_heading:.1f}")
             
             # Limit data arrays to max_points
             if len(self.timestamps) > self.max_points:
