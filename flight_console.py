@@ -9,6 +9,7 @@ supporting both real-time data streaming and historical data analysis.
 import sys
 import os
 import time
+import traceback
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                             QTabWidget, QPushButton, QLabel, QComboBox, QLineEdit, 
                             QFileDialog, QGroupBox, QGridLayout, QCheckBox, QSplitter,
@@ -22,6 +23,7 @@ import pyqtgraph as pg
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
+import pyqtgraph.opengl as gl
 
 # Import our modules
 from flight_data_parser import FlightDataParser
@@ -41,10 +43,19 @@ class DataReceiverThread(QThread):
     
     def run(self):
         self.running = True
+        print("DataReceiverThread started.")
         while self.running:
-            data = self.comm_manager.get_queued_data(timeout=0.1)
-            if data:
-                self.data_received.emit(data)
+            try:
+                data = self.comm_manager.get_queued_data(timeout=0.1)
+                if data:
+                    print(f"DataReceiverThread received: {data[:100]}...")
+                    self.data_received.emit(data)
+                # Add a small sleep to prevent busy-waiting if queue is often empty
+                # time.sleep(0.01) # Optional: uncomment if CPU usage is high
+            except Exception as e:
+                print(f"Error in DataReceiverThread: {e}")
+                traceback.print_exc()
+        print("DataReceiverThread stopped.")
     
     def stop(self):
         self.running = False
@@ -56,83 +67,227 @@ class RealTimePlotWidget(QWidget):
     
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.visualizer = DataVisualizer()
+        self.max_points = 1000
+        
+        # Initialize data arrays
+        self.timestamps = np.array([])
+        self.altitudes = np.array([])
+        self.pressures = np.array([])
+        self.temperatures = np.array([])
+        self.latitudes = np.array([])
+        self.longitudes = np.array([])
+        self.accelerations = np.array([]).reshape(0, 3)
+        self.gyros = np.array([]).reshape(0, 3)
+        self.quaternions = np.array([]).reshape(0, 4)
         
         # Create layout
-        layout = QVBoxLayout(self)
+        layout = QGridLayout(self)
         
-        # Create plot selection controls
-        control_layout = QHBoxLayout()
+        # Setup plot windows
+        self.setup_windows()
         
-        self.plot_selector = QComboBox()
-        self.plot_selector.addItems([
-            "GPS (Altitude, Speed)",
-            "Acceleration (KX134)",
-            "Acceleration (ICM)",
-            "Gyroscope (ICM)",
-            "Magnetometer (ICM)",
-            "Environmental"
+    def setup_windows(self):
+        """Initialize all plot windows."""
+        # GPS Plot
+        gps_plot = pg.PlotWidget(title="GPS Trajectory")
+        gps_plot.setLabel('left', 'Latitude')
+        gps_plot.setLabel('bottom', 'Longitude')
+        self.gps_curve = gps_plot.plot(pen='y')
+        self.layout().addWidget(gps_plot, 0, 0)
+        
+        # Altitude Plot
+        altitude_plot = pg.PlotWidget(title="Altitude")
+        altitude_plot.setLabel('left', 'Altitude (m)')
+        altitude_plot.setLabel('bottom', 'Time (s)')
+        self.altitude_curve = altitude_plot.plot(pen='b')
+        self.layout().addWidget(altitude_plot, 0, 1)
+        
+        # Environment Plot
+        env_plot = pg.PlotWidget(title="Pressure and Temperature")
+        env_plot.setLabel('left', 'Pressure (hPa)')
+        env_plot.setLabel('right', 'Temperature (°C)')
+        env_plot.setLabel('bottom', 'Time (s)')
+        self.pressure_curve = env_plot.plot(pen='r')
+        self.temp_curve = env_plot.plot(pen='g')
+        self.layout().addWidget(env_plot, 1, 0)
+        
+        # Motion Plot
+        motion_plot = pg.PlotWidget(title="Motion Sensors")
+        motion_plot.setLabel('left', 'Value')
+        motion_plot.setLabel('bottom', 'Time (s)')
+        self.accel_curves = [
+            motion_plot.plot(pen=pg.mkPen('r', width=2), name='Accel X'),
+            motion_plot.plot(pen=pg.mkPen('g', width=2), name='Accel Y'),
+            motion_plot.plot(pen=pg.mkPen('b', width=2), name='Accel Z')
+        ]
+        self.gyro_curves = [
+            motion_plot.plot(pen=pg.mkPen('r', style=Qt.DotLine), name='Gyro X'),
+            motion_plot.plot(pen=pg.mkPen('g', style=Qt.DotLine), name='Gyro Y'),
+            motion_plot.plot(pen=pg.mkPen('b', style=Qt.DotLine), name='Gyro Z')
+        ]
+        self.layout().addWidget(motion_plot, 1, 1)
+        
+        # 3D Attitude Plot
+        attitude_plot = gl.GLViewWidget()
+        attitude_plot.setCameraPosition(distance=20)
+        attitude_plot.setWindowTitle('3D Attitude')
+        
+        # Add a grid
+        gx = gl.GLGridItem()
+        gx.rotate(90, 0, 1, 0)
+        gx.translate(-10, 0, 0)
+        attitude_plot.addItem(gx)
+        gy = gl.GLGridItem()
+        gy.rotate(90, 1, 0, 0)
+        gy.translate(0, -10, 0)
+        attitude_plot.addItem(gy)
+        gz = gl.GLGridItem()
+        gz.translate(0, 0, -10)
+        attitude_plot.addItem(gz)
+        
+        # Add coordinate frame
+        self.frame = gl.GLLinePlotItem(pos=np.zeros((6, 3)), color=np.zeros((6, 4)), width=2, mode='lines', antialias=True)
+        attitude_plot.addItem(self.frame)
+        
+        self.layout().addWidget(attitude_plot, 2, 0, 1, 2)
+        
+        # Set layout stretch factors
+        for i in range(3):
+            self.layout().setRowStretch(i, 1)
+        for i in range(2):
+            self.layout().setColumnStretch(i, 1)
+            
+    def clear_plots(self):
+        """Clear all plot data."""
+        self.timestamps = np.array([])
+        self.altitudes = np.array([])
+        self.pressures = np.array([])
+        self.temperatures = np.array([])
+        self.latitudes = np.array([])
+        self.longitudes = np.array([])
+        self.accelerations = np.array([]).reshape(0, 3)
+        self.gyros = np.array([]).reshape(0, 3)
+        self.quaternions = np.array([]).reshape(0, 4)
+        
+        # Clear all curves
+        self.gps_curve.setData([], [])
+        self.altitude_curve.setData([], [])
+        self.pressure_curve.setData([], [])
+        self.temp_curve.setData([], [])
+        for curve in self.accel_curves + self.gyro_curves:
+            curve.setData([], [])
+        self.frame.setData(pos=np.zeros((6, 3)), color=np.zeros((6, 4)))
+        
+    def add_data_point(self, data_dict):
+        """Add a new data point to all plots."""
+        try:
+            # Extract data
+            timestamp = float(data_dict.get('Timestamp', 0))
+            lat = float(data_dict.get('Lat', 0))
+            lon = float(data_dict.get('Long', 0))
+            alt = float(data_dict.get('Alt', 0))
+            press = float(data_dict.get('Pressure', 0))
+            temp = float(data_dict.get('Temperature', 0))
+            
+            ax = float(data_dict.get('ICM_AccelX', 0))
+            ay = float(data_dict.get('ICM_AccelY', 0))
+            az = float(data_dict.get('ICM_AccelZ', 0))
+            
+            gx = float(data_dict.get('ICM_GyroX', 0))
+            gy = float(data_dict.get('ICM_GyroY', 0))
+            gz = float(data_dict.get('ICM_GyroZ', 0))
+            
+            qw = float(data_dict.get('ICM_QuatW', 0))
+            qx = float(data_dict.get('ICM_QuatX', 0))
+            qy = float(data_dict.get('ICM_QuatY', 0))
+            qz = float(data_dict.get('ICM_QuatZ', 0))
+            
+            # Append data to arrays
+            self.timestamps = np.append(self.timestamps, timestamp)
+            self.altitudes = np.append(self.altitudes, alt)
+            self.pressures = np.append(self.pressures, press)
+            self.temperatures = np.append(self.temperatures, temp)
+            self.latitudes = np.append(self.latitudes, lat)
+            self.longitudes = np.append(self.longitudes, lon)
+            
+            # Handle 2D arrays properly
+            self.accelerations = np.vstack([self.accelerations, [ax, ay, az]]) if len(self.accelerations) > 0 else np.array([[ax, ay, az]])
+            self.gyros = np.vstack([self.gyros, [gx, gy, gz]]) if len(self.gyros) > 0 else np.array([[gx, gy, gz]])
+            self.quaternions = np.vstack([self.quaternions, [qw, qx, qy, qz]]) if len(self.quaternions) > 0 else np.array([[qw, qx, qy, qz]])
+            
+            # Limit data points
+            if len(self.timestamps) > self.max_points:
+                self.timestamps = self.timestamps[-self.max_points:]
+                self.altitudes = self.altitudes[-self.max_points:]
+                self.pressures = self.pressures[-self.max_points:]
+                self.temperatures = self.temperatures[-self.max_points:]
+                self.latitudes = self.latitudes[-self.max_points:]
+                self.longitudes = self.longitudes[-self.max_points:]
+                self.accelerations = self.accelerations[-self.max_points:]
+                self.gyros = self.gyros[-self.max_points:]
+                self.quaternions = self.quaternions[-self.max_points:]
+            
+            # Update plots
+            # GPS Plot
+            if len(self.longitudes) > 0 and len(self.latitudes) > 0:
+                self.gps_curve.setData(self.longitudes, self.latitudes)
+            
+            # Altitude Plot
+            if len(self.timestamps) > 0 and len(self.altitudes) > 0:
+                self.altitude_curve.setData(self.timestamps, self.altitudes)
+            
+            # Environment Plot
+            if len(self.timestamps) > 0:
+                if len(self.pressures) > 0:
+                    self.pressure_curve.setData(self.timestamps, self.pressures)
+                if len(self.temperatures) > 0:
+                    self.temp_curve.setData(self.timestamps, self.temperatures)
+            
+            # Motion Plot
+            if len(self.timestamps) > 0:
+                for i, curve in enumerate(self.accel_curves):
+                    if len(self.accelerations) > 0:
+                        curve.setData(self.timestamps, self.accelerations[:, i])
+                for i, curve in enumerate(self.gyro_curves):
+                    if len(self.gyros) > 0:
+                        curve.setData(self.timestamps, self.gyros[:, i])
+            
+            # Update 3D attitude
+            if len(self.quaternions) > 0:
+                q = self.quaternions[-1]
+                R = self.quaternion_to_rotation_matrix(q)
+                
+                # Update coordinate frame
+                points = np.array([
+                    [0, 0, 0],
+                    [5, 0, 0],  # X-axis
+                    [0, 5, 0],  # Y-axis
+                    [0, 0, 5]   # Z-axis
+                ])
+                
+                # Transform points
+                transformed_points = np.dot(points, R.T)
+                
+                # Update frame lines
+                x_points = np.array([transformed_points[0], transformed_points[1]])
+                y_points = np.array([transformed_points[0], transformed_points[2]])
+                z_points = np.array([transformed_points[0], transformed_points[3]])
+                
+                self.frame.setData(pos=np.vstack([x_points, y_points, z_points]),
+                                 color=np.array([[1,0,0,1], [1,0,0,1],  # Red for X
+                                               [0,1,0,1], [0,1,0,1],  # Green for Y
+                                               [0,0,1,1], [0,0,1,1]]))  # Blue for Z
+                
+        except Exception as e:
+            print(f"Error updating plots: {e}")
+            
+    def quaternion_to_rotation_matrix(self, q):
+        w, x, y, z = q
+        return np.array([
+            [1 - 2*y*y - 2*z*z,     2*x*y - 2*z*w,     2*x*z + 2*y*w],
+            [    2*x*y + 2*z*w, 1 - 2*x*x - 2*z*z,     2*y*z - 2*x*w],
+            [    2*x*z - 2*y*w,     2*y*z + 2*x*w, 1 - 2*x*x - 2*y*y]
         ])
-        
-        self.window_size_spin = QSpinBox()
-        self.window_size_spin.setRange(10, 1000)
-        self.window_size_spin.setValue(100)
-        self.window_size_spin.setSingleStep(10)
-        
-        control_layout.addWidget(QLabel("Plot:"))
-        control_layout.addWidget(self.plot_selector)
-        control_layout.addWidget(QLabel("Window Size:"))
-        control_layout.addWidget(self.window_size_spin)
-        control_layout.addStretch()
-        
-        layout.addLayout(control_layout)
-        
-        # Create plot widget
-        self.plot_widget, self.plot_data = self.visualizer.create_real_time_plot_widget(self)
-        layout.addWidget(self.plot_widget)
-        
-        # Current column group being plotted
-        self.current_columns = ["Alt", "Speed"]
-        self.plot_selector.currentIndexChanged.connect(self.update_plot_selection)
-        
-        # Initialize the plot
-        self.update_plot_selection(0)
-    
-    def update_plot_selection(self, index):
-        """Update the plot based on the selected plot type."""
-        selection = self.plot_selector.currentText()
-        
-        if "GPS" in selection:
-            self.current_columns = ["Alt", "Speed"]
-            self.plot_widget.setTitle("GPS Data")
-        elif "Acceleration (KX134)" in selection:
-            self.current_columns = ["KX134_AccelX", "KX134_AccelY", "KX134_AccelZ"]
-            self.plot_widget.setTitle("KX134 Accelerometer")
-        elif "Acceleration (ICM)" in selection:
-            self.current_columns = ["ICM_AccelX", "ICM_AccelY", "ICM_AccelZ"]
-            self.plot_widget.setTitle("ICM Accelerometer")
-        elif "Gyroscope" in selection:
-            self.current_columns = ["ICM_GyroX", "ICM_GyroY", "ICM_GyroZ"]
-            self.plot_widget.setTitle("ICM Gyroscope")
-        elif "Magnetometer" in selection:
-            self.current_columns = ["ICM_MagX", "ICM_MagY", "ICM_MagZ"]
-            self.plot_widget.setTitle("ICM Magnetometer")
-        elif "Environmental" in selection:
-            self.current_columns = ["Pressure", "Temperature"]
-            self.plot_widget.setTitle("Environmental Data")
-        
-        # Reset plot data with new columns
-        self.plot_data = {}
-    
-    def add_data_point(self, data_point):
-        """Add a new data point to the real-time plot."""
-        self.plot_data = self.visualizer.add_data_to_real_time_plot(
-            self.plot_widget, 
-            self.plot_data, 
-            data_point, 
-            self.current_columns, 
-            self.window_size_spin.value()
-        )
 
 
 class StaticPlotWidget(QWidget):
@@ -211,34 +366,28 @@ class StaticPlotWidget(QWidget):
             return ["ICM_MagX", "ICM_MagY", "ICM_MagZ"]
         elif "Environmental" in selection:
             return ["Pressure", "Temperature"]
+        
+        return []
     
     def create_plot(self):
-        """Create and display the selected plot type."""
-        if self.data is None or self.data.empty:
+        """Create the selected plot type."""
+        if self.data is None:
             QMessageBox.warning(self, "No Data", "Please load data first")
             return
         
         plot_type = self.plot_type_combo.currentText()
+        
+        # Clear the current figure
         self.figure.clear()
         
         if plot_type == "Time Series":
             columns = self.get_selected_columns()
-            fig = self.visualizer.create_time_series_plot(self.data, columns)
+            self.visualizer.create_time_series_plot(self.data, columns, ax=self.figure.add_subplot(111))
             
-            # Transfer from matplotlib figure to our canvas
-            for ax in fig.get_axes():
-                self.figure.add_axes(ax)
-        
         elif plot_type == "GPS Trajectory":
-            fig = self.visualizer.create_gps_trajectory_plot(self.data)
+            self.visualizer.create_gps_trajectory_plot(self.data, ax=self.figure.add_subplot(111))
             
-            # Transfer from matplotlib figure to our canvas
-            for ax in fig.get_axes():
-                self.figure.add_axes(ax)
-        
         elif plot_type == "3D Trajectory":
-            # This uses Plotly, which we can't directly embed in matplotlib
-            # So we'll create a simple 3D plot in matplotlib instead
             if any(col not in self.data.columns for col in ['Lat', 'Long', 'Alt']):
                 QMessageBox.warning(self, "Missing Data", "GPS data is incomplete")
                 return
@@ -256,11 +405,19 @@ class StaticPlotWidget(QWidget):
                 "ICM": ["ICM_AccelX", "ICM_AccelY", "ICM_AccelZ"]
             }
             
-            fig = self.visualizer.create_sensor_comparison_plot(self.data, sensor_groups)
+            # Create subplots for each sensor group
+            n_groups = len(sensor_groups)
+            for i, (group_name, columns) in enumerate(sensor_groups.items()):
+                ax = self.figure.add_subplot(n_groups, 1, i+1)
+                for column in columns:
+                    if column in self.data.columns:
+                        ax.plot(self.data['Timestamp'], self.data[column], label=column)
+                ax.set_title(f"{group_name} Sensors")
+                ax.set_ylabel('Value')
+                ax.grid(True)
+                ax.legend()
             
-            # Transfer from matplotlib figure to our canvas
-            for ax in fig.get_axes():
-                self.figure.add_axes(ax)
+            self.figure.tight_layout()
         
         self.canvas.draw()
 
@@ -279,6 +436,16 @@ class MainWindow(QMainWindow):
         self.parser = FlightDataParser()
         self.visualizer = DataVisualizer()
         self.comm_manager = DataCommManager()
+        
+        # Initialize data headers
+        self.data_headers = [
+            "Timestamp", "FixType", "Sats", "Lat", "Long", "Alt", "AltMSL", 
+            "Speed", "Heading", "pDOP", "RTK", "Pressure", "Temperature", 
+            "KX134_AccelX", "KX134_AccelY", "KX134_AccelZ", "ICM_AccelX", 
+            "ICM_AccelY", "ICM_AccelZ", "ICM_GyroX", "ICM_GyroY", "ICM_GyroZ", 
+            "ICM_MagX", "ICM_MagY", "ICM_MagZ", "ICM_Temp", "ICM_QuatW", 
+            "ICM_QuatX", "ICM_QuatY", "ICM_QuatZ"
+        ]
         
         # Create main widget and layout
         self.central_widget = QWidget()
@@ -399,28 +566,45 @@ class MainWindow(QMainWindow):
         self.refresh_ports()
     
     def create_realtime_tab(self):
-        """Create the Real-time Visualization tab."""
-        realtime_tab = QWidget()
-        layout = QVBoxLayout(realtime_tab)
-        
-        # Create real-time plot widget
-        self.realtime_plot = RealTimePlotWidget()
-        layout.addWidget(self.realtime_plot)
-        
-        # Add controls
+        """Create the real-time visualization tab."""
+        # Create a container widget for the tab
+        realtime_tab_container = QWidget()
+        tab_layout = QVBoxLayout(realtime_tab_container)
+
+        # Add refresh rate control
         control_layout = QHBoxLayout()
-        
-        self.start_stop_button = QPushButton("Start")
-        self.start_stop_button.setEnabled(False)  # Disabled until connected
-        self.start_stop_button.clicked.connect(self.toggle_realtime)
-        
-        control_layout.addWidget(self.start_stop_button)
+        control_layout.addWidget(QLabel("Update Rate (ms):"))
+        self.update_rate_spin = QSpinBox()
+        self.update_rate_spin.setRange(10, 1000)
+        self.update_rate_spin.setValue(100)
+        self.update_rate_spin.setSingleStep(10)
+        control_layout.addWidget(self.update_rate_spin)
+
+        # Add clear button
+        clear_button = QPushButton("Clear Plots")
+        # Connect the clear button to the clear_plots method of the RealTimePlotWidget instance
+        # We need to ensure self.real_time_plot exists before connecting
+        # Defer connection slightly or ensure instance is created first
+
+        control_layout.addWidget(clear_button)
         control_layout.addStretch()
-        
-        layout.addLayout(control_layout)
-        
-        # Add tab
-        self.tabs.addTab(realtime_tab, "Real-time Visualization")
+
+        # Add the control layout to the main tab layout
+        tab_layout.addLayout(control_layout)
+
+        # Create and add the plot widget
+        self.real_time_plot = RealTimePlotWidget(self)
+        # self.real_time_plot.setup_windows() # This is called in __init__
+        tab_layout.addWidget(self.real_time_plot) # Add plot widget below controls
+
+        # Now connect the clear button since self.real_time_plot exists
+        clear_button.clicked.connect(self.real_time_plot.clear_plots)
+
+        # Add the container widget as the tab
+        self.tabs.addTab(realtime_tab_container, "Real-time Visualization")
+
+        # Remove the erroneous line that added controls to the plot widget's layout
+        # self.real_time_plot.layout().addLayout(control_layout) # REMOVED
     
     def create_analysis_tab(self):
         """Create the Data Analysis tab."""
@@ -496,9 +680,6 @@ class MainWindow(QMainWindow):
             self.update_data_preview(data)
             self.static_plot.set_data(data)
             
-            # Enable real-time simulation if desired
-            self.start_stop_button.setEnabled(True)
-            
             self.status_bar.showMessage(f"Loaded {len(data)} data points from {os.path.basename(file_path)}")
         
         except Exception as e:
@@ -540,7 +721,6 @@ class MainWindow(QMainWindow):
             self.connected = True
             self.connect_button.setText("Disconnect")
             self.connect_action.setText("Disconnect")
-            self.start_stop_button.setEnabled(True)
             self.data_thread.start()
             
             self.status_bar.showMessage(f"Connected to {port} at {baud_rate} baud")
@@ -561,7 +741,6 @@ class MainWindow(QMainWindow):
             if self.comm_manager.connect_tcp(host, port):
                 self.connected = True
                 self.network_connect_button.setText("Disconnect")
-                self.start_stop_button.setEnabled(True)
                 self.data_thread.start()
                 
                 self.status_bar.showMessage(f"Connected to {host}:{port} via TCP")
@@ -572,7 +751,6 @@ class MainWindow(QMainWindow):
             if self.comm_manager.connect_udp(port, host, port):
                 self.connected = True
                 self.network_connect_button.setText("Disconnect")
-                self.start_stop_button.setEnabled(True)
                 self.data_thread.start()
                 
                 self.status_bar.showMessage(f"Connected to {host}:{port} via UDP")
@@ -591,92 +769,61 @@ class MainWindow(QMainWindow):
         
         self.status_bar.showMessage("Disconnected")
     
-    def toggle_realtime(self):
-        """Toggle real-time data visualization."""
-        if self.start_stop_button.text() == "Start":
-            self.start_stop_button.setText("Stop")
-            # If we have file data but no connection, simulate real-time
-            if not self.connected and self.parser.data is not None:
-                self.simulate_realtime()
-        else:
-            self.start_stop_button.setText("Start")
-    
-    def simulate_realtime(self):
-        """Simulate real-time data from loaded file data."""
-        if self.parser.data is None or self.parser.data.empty:
-            return
-        
-        # Create a timer to send data points at regular intervals
-        self.sim_timer = QTimer()
-        self.sim_timer.timeout.connect(self.send_simulated_data)
-        self.sim_index = 0
-        self.sim_timer.start(100)  # 100ms interval (10Hz)
-    
-    def send_simulated_data(self):
-        """Send a simulated data point from the loaded file data."""
-        if self.start_stop_button.text() == "Stop" and self.parser.data is not None:
-            if self.sim_index < len(self.parser.data):
-                # Get the current row as a dictionary
-                row = self.parser.data.iloc[self.sim_index].to_dict()
-                
-                # Convert to a CSV line
-                line = ",".join([str(row[col]) for col in self.parser.data.columns])
-                
-                # Process the line as if it came from a connection
-                self.process_received_data(line)
-                
-                self.sim_index += 1
-            else:
-                # Reached the end, stop simulation
-                self.sim_timer.stop()
-                self.start_stop_button.setText("Start")
-    
-    def process_received_data(self, data_line):
-        """Process a received line of data."""
+    def process_received_data(self, data):
+        """Process received data and update visualizations"""
+        print(f"MainWindow received signal with data: {data[:100]}...") # Added confirmation print
         try:
-            # Parse data line
-            if "," in data_line:  # CSV format
-                values = data_line.split(",")
-                
-                # Check if this is a header line
-                if values[0].strip().lower() == "timestamp":
-                    return  # Skip header line
-                
-                # Create data dictionary
-                # Adjust the column names based on what you expect from the header
-                columns = self.parser.column_names or [
-                    "Timestamp", "FixType", "Sats", "Lat", "Long", "Alt", "AltMSL", 
-                    "Speed", "Heading", "pDOP", "RTK", "Pressure", "Temperature", 
-                    "KX134_AccelX", "KX134_AccelY", "KX134_AccelZ", "ICM_AccelX", 
-                    "ICM_AccelY", "ICM_AccelZ", "ICM_GyroX", "ICM_GyroY", "ICM_GyroZ", 
-                    "ICM_MagX", "ICM_MagY", "ICM_MagZ", "ICM_Temp", "ICM_Q0", "ICM_Q1", "ICM_Q2", "ICM_Q3"
-                ]
-                
-                data_point = {}
-                for i, value in enumerate(values):
-                    if i < len(columns):
-                        try:
-                            data_point[columns[i]] = float(value)
-                        except ValueError:
-                            data_point[columns[i]] = value
-                
-                # Process batch data
-                self.parser.process_batch(data_line)
-                
-                # Update real-time plot if it's active
-                if self.start_stop_button.text() == "Stop":
-                    self.realtime_plot.add_data_point(data_point)
-                
-                # Update status bar occasionally
-                if int(time.time()) % 5 == 0:
-                    self.status_bar.showMessage(f"Receiving data: {data_point['Timestamp']}")
-        
+            # Parse the data line
+            values = data.strip().split(',')
+            print(f"Received data values: {values}")  # Debug print
+
+            # Skip header lines or lines with incorrect number of columns
+            if len(values) != len(self.data_headers) or values[0] == 'Timestamp':
+                print(f"Skipping line: Header or mismatched columns ({len(values)} vs {len(self.data_headers)}). Data: {data}")
+                return
+
+            # Create data dictionary
+            data_dict = {}
+            for i in range(len(self.data_headers)):
+                try:
+                    # Try converting to float, fallback to string if error
+                    data_dict[self.data_headers[i]] = float(values[i].strip())
+                except (ValueError, IndexError):
+                    # Handle potential errors during conversion or if fewer values than headers
+                    data_dict[self.data_headers[i]] = values[i].strip() if i < len(values) else None # Assign None if value missing
+
+            print(f"Parsed data_dict: {data_dict}") # Added print
+
+            # Update data preview
+            self.update_data_preview(data_dict)
+
+            # Update real-time visualization (always add data, plot widget handles visibility)
+            if self.real_time_plot:
+                print("Calling real_time_plot.add_data_point...")  # Confirmation print
+                self.real_time_plot.add_data_point(data_dict)
+
+            # Update status bar with latest timestamp
+            if 'Timestamp' in data_dict:
+                timestamp_val = data_dict['Timestamp']
+                # Ensure timestamp_val is numeric before formatting
+                if isinstance(timestamp_val, (int, float)):
+                    self.status_bar.showMessage(f"Last update: {timestamp_val:.2f}")
+                else:
+                    self.status_bar.showMessage(f"Last update: {timestamp_val}")
+
         except Exception as e:
-            print(f"Error processing data: {e}")
+            print(f"Error processing data: {str(e)}")  # Debug print
+            print(f"Data that caused error: {data}")  # Debug print
+            traceback.print_exc()  # Print full traceback
     
     def update_data_preview(self, data):
         """Update the data preview with information about the loaded data."""
-        if data is not None and not data.empty:
+        if isinstance(data, dict):
+            preview_text = "Latest data point:\n"
+            for key, value in data.items():
+                preview_text += f"{key}: {value}\n"
+            self.data_preview_label.setText(preview_text)
+        elif data is not None and not data.empty:
             preview_text = f"Data loaded: {len(data)} rows, {len(data.columns)} columns\n"
             preview_text += f"Time range: {data['Timestamp'].min()} to {data['Timestamp'].max()}\n"
             
@@ -690,6 +837,8 @@ class MainWindow(QMainWindow):
                 pass
             
             self.data_preview_label.setText(preview_text)
+        else:
+            self.data_preview_label.setText("No data loaded")
     
     def save_data(self):
         """Save the current data to a CSV file."""
@@ -723,10 +872,6 @@ class MainWindow(QMainWindow):
         # Clean up resources
         if self.connected:
             self.disconnect()
-        
-        # Stop simulation if running
-        if hasattr(self, 'sim_timer') and self.sim_timer.isActive():
-            self.sim_timer.stop()
         
         event.accept()
 

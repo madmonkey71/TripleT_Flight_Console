@@ -29,7 +29,7 @@ class DataVisualizer:
         pass
     
     def create_time_series_plot(self, data: pd.DataFrame, columns: List[str],
-                                title: str = "Time Series Plot") -> plt.Figure:
+                                title: str = "Time Series Plot", ax: Optional[plt.Axes] = None) -> Union[plt.Figure, None]:
         """
         Create a time series plot for selected columns.
         
@@ -37,14 +37,16 @@ class DataVisualizer:
             data: DataFrame containing the flight data
             columns: List of column names to plot
             title: Plot title
+            ax: Optional matplotlib axes to plot on
             
         Returns:
-            Matplotlib Figure object
+            Matplotlib Figure object if ax is None, otherwise None
         """
         if data.empty:
             raise ValueError("Empty data provided for plotting")
         
-        fig, ax = plt.subplots(figsize=(10, 6))
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(10, 6))
         
         for column in columns:
             if column in data.columns:
@@ -56,22 +58,24 @@ class DataVisualizer:
         ax.legend()
         ax.grid(True)
         
-        return fig
+        return None if ax is not None else plt.gcf()
     
-    def create_gps_trajectory_plot(self, data: pd.DataFrame) -> plt.Figure:
+    def create_gps_trajectory_plot(self, data: pd.DataFrame, ax: Optional[plt.Axes] = None) -> Union[plt.Figure, None]:
         """
         Create a 2D GPS trajectory plot.
         
         Args:
             data: DataFrame containing GPS data (must have Lat and Long columns)
+            ax: Optional matplotlib axes to plot on
             
         Returns:
-            Matplotlib Figure object
+            Matplotlib Figure object if ax is None, otherwise None
         """
         if 'Lat' not in data.columns or 'Long' not in data.columns:
             raise ValueError("Data must contain 'Lat' and 'Long' columns")
         
-        fig, ax = plt.subplots(figsize=(8, 8))
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(8, 8))
         
         # Plot the trajectory
         ax.plot(data['Long'], data['Lat'], 'b-', linewidth=2)
@@ -84,7 +88,7 @@ class DataVisualizer:
         ax.grid(True)
         ax.legend()
         
-        return fig
+        return None if ax is not None else plt.gcf()
     
     def create_3d_trajectory_plot(self, data: pd.DataFrame) -> go.Figure:
         """
@@ -160,22 +164,25 @@ class DataVisualizer:
         
         return fig
     
-    def create_sensor_comparison_plot(self, data: pd.DataFrame, sensor_groups: Dict[str, List[str]]) -> plt.Figure:
+    def create_sensor_comparison_plot(self, data: pd.DataFrame, sensor_groups: Dict[str, List[str]], 
+                                    axes: Optional[List[plt.Axes]] = None) -> Union[plt.Figure, None]:
         """
         Create a comparison plot for different sensor readings.
         
         Args:
             data: DataFrame containing sensor data
             sensor_groups: Dictionary mapping sensor group names to lists of column names
+            axes: Optional list of matplotlib axes to plot on
             
         Returns:
-            Matplotlib Figure object
+            Matplotlib Figure object if axes is None, otherwise None
         """
         n_groups = len(sensor_groups)
-        fig, axes = plt.subplots(n_groups, 1, figsize=(12, 3*n_groups), sharex=True)
         
-        if n_groups == 1:
-            axes = [axes]
+        if axes is None:
+            fig, axes = plt.subplots(n_groups, 1, figsize=(12, 3*n_groups), sharex=True)
+            if n_groups == 1:
+                axes = [axes]
         
         for i, (group_name, columns) in enumerate(sensor_groups.items()):
             for column in columns:
@@ -188,9 +195,11 @@ class DataVisualizer:
             axes[i].legend()
         
         axes[-1].set_xlabel('Timestamp')
-        fig.tight_layout()
         
-        return fig
+        if axes is None:
+            plt.tight_layout()
+            return plt.gcf()
+        return None
     
     def create_attitude_visualization(self, q0: float, q1: float, q2: float, q3: float) -> np.ndarray:
         """

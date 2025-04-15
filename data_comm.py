@@ -13,6 +13,9 @@ import queue
 from typing import Dict, List, Optional, Callable, Any, Tuple, Union
 import socket
 import io
+import pandas as pd
+from io import StringIO
+import traceback
 
 
 class DataCommManager:
@@ -58,25 +61,47 @@ class DataCommManager:
             })
         return ports
     
-    def connect_serial(self, port: str, baud_rate: int = 115200, timeout: float = 1.0) -> bool:
+    def connect_serial(self, port: str, baud_rate: int) -> bool:
         """
-        Connect to a serial port.
+        Connect to a serial port and start receiving data.
         
         Args:
             port: Serial port device name
             baud_rate: Baud rate for the connection
-            timeout: Connection timeout in seconds
             
         Returns:
             True if connection successful, False otherwise
         """
+        print(f"DataCommManager: Attempting to connect to {port} at {baud_rate} baud...")
+        if self.serial_conn:
+            print("DataCommManager: Already connected. Closing existing connection first.")
+            self.close()
+        
         try:
-            # Close existing connection if any
-            if self.serial_conn is not None and self.serial_conn.is_open:
-                self.serial_conn.close()
+            self.serial_conn = serial.Serial(
+                port=port,
+                baudrate=baud_rate,
+                timeout=0.1,
+                write_timeout=0.1,
+                bytesize=serial.EIGHTBITS,
+                parity=serial.PARITY_NONE,
+                stopbits=serial.STOPBITS_ONE
+            )
+            print("DataCommManager: Serial object created.")
+            if not self.serial_conn.is_open:
+                print("DataCommManager: Failed to open serial port immediately.")
+                self.serial_conn = None
+                return False
             
-            # Create new connection
-            self.serial_conn = serial.Serial(port, baud_rate, timeout=timeout)
+            print("DataCommManager: Serial port is open. Starting receive thread...")
+            self.running = True
+            self.receive_thread = threading.Thread(target=self._read_serial, daemon=True)
+            self.receive_thread.start()
+            print("DataCommManager: Receive thread started.")
+            
+            # Test the connection
+            self.serial_conn.flushInput()
+            self.serial_conn.flushOutput()
             
             # Start receive thread if callback is provided
             if self.data_callback is not None:
@@ -84,8 +109,14 @@ class DataCommManager:
             
             return True
         
+        except serial.SerialException as e:
+            print(f"DataCommManager: Serial connection failed: {e}")
+            self.serial_conn = None
+            return False
         except Exception as e:
-            print(f"Serial connection error: {e}")
+            print(f"DataCommManager: Unexpected error during serial connection: {e}")
+            traceback.print_exc()
+            self.serial_conn = None
             return False
     
     def connect_tcp(self, host: str, port: int, timeout: float = 1.0) -> bool:
@@ -171,7 +202,7 @@ class DataCommManager:
         self.line_buffer = ""
         
         if conn_type == 'serial':
-            self.receive_thread = threading.Thread(target=self._receive_serial_data)
+            self.receive_thread = threading.Thread(target=self._read_serial)
         elif conn_type == 'tcp':
             self.receive_thread = threading.Thread(target=self._receive_tcp_data)
         elif conn_type == 'udp':
@@ -180,23 +211,48 @@ class DataCommManager:
         self.receive_thread.daemon = True
         self.receive_thread.start()
     
-    def _receive_serial_data(self) -> None:
-        """Thread function for receiving data from serial connection."""
-        if self.serial_conn is None:
-            return
-        
-        self.serial_conn.flushInput()
-        
-        while self.running:
+    def _read_serial(self) -> None:
+        """Continuously read data from the serial port."""
+        print("_read_serial thread started.")
+        while self.running and self.serial_conn:
             try:
-                if self.serial_conn.in_waiting > 0:
-                    data = self.serial_conn.read(self.serial_conn.in_waiting).decode('utf-8', errors='replace')
-                    self._process_received_data(data)
+                # Read available bytes
+                bytes_available = self.serial_conn.in_waiting
+                if bytes_available > 0:
+                    raw_data = self.serial_conn.read(bytes_available)
+                    print(f"_read_serial: Read {len(raw_data)} bytes: {raw_data[:50]}...")
+                    
+                    # Decode data and handle potential errors
+                    try:
+                        data = raw_data.decode('utf-8', errors='ignore')
+                    except UnicodeDecodeError as decode_error:
+                        print(f"_read_serial: UnicodeDecodeError: {decode_error} - Data: {raw_data}")
+                        continue # Skip this chunk if decoding fails
+                        
+                    # Append to line buffer
+                    self.line_buffer += data
+                    
+                    # Process complete lines
+                    while '\n' in self.line_buffer:
+                        line, self.line_buffer = self.line_buffer.split('\n', 1)
+                        line = line.strip() # Remove leading/trailing whitespace including \r
+                        if line:
+                            print(f"_read_serial: Queuing line: {line}")
+                            self.data_queue.put(line)
                 else:
-                    time.sleep(0.01)  # Small delay to prevent CPU hogging
+                    # Sleep briefly if no data is available to avoid busy-waiting
+                    time.sleep(0.01)
+            except serial.SerialException as e:
+                print(f"Serial error in _read_serial: {e}")
+                self.running = False # Stop the loop on serial error
+                self.close() # Attempt to close the connection
+                break
             except Exception as e:
-                print(f"Serial read error: {e}")
-                time.sleep(0.1)
+                print(f"Unexpected error in _read_serial: {e}")
+                traceback.print_exc()
+                # Optionally decide whether to continue or break on unexpected errors
+                time.sleep(0.1) # Brief pause before retrying
+        print("_read_serial thread finished.")
     
     def _receive_tcp_data(self) -> None:
         """Thread function for receiving data from TCP connection."""
@@ -333,4 +389,58 @@ class DataCommManager:
         self.serial_conn = None
         self.tcp_conn = None
         self.udp_socket = None
-        self.receive_thread = None 
+        self.receive_thread = None
+    
+    def test_serial_connection(self, port: str, baud_rate: int = 115200, timeout: float = 1.0) -> bool:
+        """
+        Test the serial connection and verify data format.
+        
+        Args:
+            port: Serial port device name
+            baud_rate: Baud rate for the connection
+            timeout: Connection timeout in seconds
+            
+        Returns:
+            True if test successful, False otherwise
+        """
+        try:
+            print(f"\nTesting serial connection to {port}...")
+            
+            # Try to connect
+            if not self.connect_serial(port, baud_rate):
+                print("Failed to establish connection")
+                return False
+            
+            # Wait for data
+            print("Waiting for data (timeout: {}s)...".format(timeout))
+            start_time = time.time()
+            data_received = False
+            
+            while time.time() - start_time < timeout:
+                if self.serial_conn.in_waiting > 0:
+                    data = self.serial_conn.read(self.serial_conn.in_waiting).decode('utf-8', errors='replace')
+                    if data:
+                        print(f"Received test data: {data.strip()}")
+                        data_received = True
+                        break
+                time.sleep(0.1)
+            
+            if not data_received:
+                print("No data received during test period")
+                return False
+            
+            # Verify data format
+            try:
+                # Try to parse the data as CSV
+                df = pd.read_csv(StringIO(data))
+                print(f"Data format verified - Found {len(df.columns)} columns")
+                return True
+            except Exception as e:
+                print(f"Data format verification failed: {str(e)}")
+                return False
+            
+        except Exception as e:
+            print(f"Test failed: {str(e)}")
+            return False
+        finally:
+            self.close() 
