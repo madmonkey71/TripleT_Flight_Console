@@ -14,8 +14,13 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                             QTabWidget, QPushButton, QLabel, QComboBox, QLineEdit, 
                             QFileDialog, QGroupBox, QGridLayout, QCheckBox, QSplitter,
                             QMessageBox, QSpinBox, QStatusBar, QAction, QMenu, QToolBar)
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal, pyqtSlot, QThread
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal, pyqtSlot, QThread, QUrl
 from PyQt5.QtGui import QIcon, QFont
+# Import WebEngine for Google Maps integration
+try:
+    from PyQt5.QtWebEngineWidgets import QWebEngineView
+except ImportError:
+    print("QtWebEngineWidgets not available. Google Maps integration will be disabled.")
 
 import numpy as np
 import pandas as pd
@@ -80,6 +85,9 @@ class RealTimePlotWidget(QWidget):
         self.gyros = np.array([]).reshape(0, 3)
         self.quaternions = np.array([]).reshape(0, 4)
         
+        # For Google Maps
+        self.maps_html = None
+        
         # Create layout
         layout = QGridLayout(self)
         
@@ -87,135 +95,331 @@ class RealTimePlotWidget(QWidget):
         self.setup_windows()
         
     def setup_windows(self):
-        """Initialize all plot windows."""
-        # GPS Plot
-        gps_plot = pg.PlotWidget(title="GPS Trajectory")
-        gps_plot.setLabel('left', 'Latitude')
-        gps_plot.setLabel('bottom', 'Longitude')
-        self.gps_curve = gps_plot.plot(pen='y')
-        self.layout().addWidget(gps_plot, 0, 0)
-        
-        # Altitude Plot
-        altitude_plot = pg.PlotWidget(title="Altitude")
-        altitude_plot.setLabel('left', 'Altitude (m)')
-        altitude_plot.setLabel('bottom', 'Time (s)')
-        self.altitude_curve = altitude_plot.plot(pen='b')
-        self.layout().addWidget(altitude_plot, 0, 1)
-        
-        # Environment Plot
-        env_plot = pg.PlotWidget(title="Pressure and Temperature")
-        env_plot.setLabel('left', 'Pressure (hPa)')
-        env_plot.setLabel('right', 'Temperature (°C)')
-        env_plot.setLabel('bottom', 'Time (s)')
-        self.pressure_curve = env_plot.plot(pen='r')
-        self.temp_curve = env_plot.plot(pen='g')
-        self.layout().addWidget(env_plot, 1, 0)
-        
-        # Motion Plot
-        motion_plot = pg.PlotWidget(title="Motion Sensors")
-        motion_plot.setLabel('left', 'Value')
-        motion_plot.setLabel('bottom', 'Time (s)')
-        self.accel_curves = [
-            motion_plot.plot(pen=pg.mkPen('r', width=2), name='Accel X'),
-            motion_plot.plot(pen=pg.mkPen('g', width=2), name='Accel Y'),
-            motion_plot.plot(pen=pg.mkPen('b', width=2), name='Accel Z')
-        ]
-        self.gyro_curves = [
-            motion_plot.plot(pen=pg.mkPen('r', style=Qt.DotLine), name='Gyro X'),
-            motion_plot.plot(pen=pg.mkPen('g', style=Qt.DotLine), name='Gyro Y'),
-            motion_plot.plot(pen=pg.mkPen('b', style=Qt.DotLine), name='Gyro Z')
-        ]
-        self.layout().addWidget(motion_plot, 1, 1)
-        
-        # 3D Attitude Plot
-        attitude_plot = gl.GLViewWidget()
-        attitude_plot.setCameraPosition(distance=20)
-        attitude_plot.setWindowTitle('3D Attitude')
-        
-        # Add a grid
-        gx = gl.GLGridItem()
-        gx.rotate(90, 0, 1, 0)
-        gx.translate(-10, 0, 0)
-        attitude_plot.addItem(gx)
-        gy = gl.GLGridItem()
-        gy.rotate(90, 1, 0, 0)
-        gy.translate(0, -10, 0)
-        attitude_plot.addItem(gy)
-        gz = gl.GLGridItem()
-        gz.translate(0, 0, -10)
-        attitude_plot.addItem(gz)
-        
-        # Add coordinate frame
-        self.frame = gl.GLLinePlotItem(pos=np.zeros((6, 3)), color=np.zeros((6, 4)), width=2, mode='lines', antialias=True)
-        attitude_plot.addItem(self.frame)
-        
-        self.layout().addWidget(attitude_plot, 2, 0, 1, 2)
-        
-        # Set layout stretch factors
-        for i in range(3):
-            self.layout().setRowStretch(i, 1)
-        for i in range(2):
-            self.layout().setColumnStretch(i, 1)
+        """Set up all visualization windows and layouts."""
+        try:
+            # Create layout
+            layout = QGridLayout()
+            layout.setContentsMargins(10, 10, 10, 10)
+            layout.setSpacing(10)
             
-    def clear_plots(self):
-        """Clear all plot data."""
-        self.timestamps = np.array([])
-        self.altitudes = np.array([])
-        self.pressures = np.array([])
-        self.temperatures = np.array([])
-        self.latitudes = np.array([])
-        self.longitudes = np.array([])
-        self.accelerations = np.array([]).reshape(0, 3)
-        self.gyros = np.array([]).reshape(0, 3)
-        self.quaternions = np.array([]).reshape(0, 4)
+            # Create altitude plot
+            self.altitude_plot = pg.PlotWidget(title="Altitude")
+            self.altitude_plot.setLabel('left', 'Altitude', units='m')
+            self.altitude_plot.setLabel('bottom', 'Time', units='s')
+            self.altitude_plot.showGrid(x=True, y=True)
+            self.altitude_curve = self.altitude_plot.plot(pen=pg.mkPen('b', width=2))
+            
+            # Create pressure plot
+            self.pressure_plot = pg.PlotWidget(title="Pressure")
+            self.pressure_plot.setLabel('left', 'Pressure', units='hPa')
+            self.pressure_plot.setLabel('bottom', 'Time', units='s')
+            self.pressure_plot.showGrid(x=True, y=True)
+            self.pressure_curve = self.pressure_plot.plot(pen=pg.mkPen('r', width=2))
+            
+            # Create temperature plot
+            self.temperature_plot = pg.PlotWidget(title="Temperature")
+            self.temperature_plot.setLabel('left', 'Temperature', units='°C')
+            self.temperature_plot.setLabel('bottom', 'Time', units='s')
+            self.temperature_plot.showGrid(x=True, y=True)
+            self.temperature_curve = self.temperature_plot.plot(pen=pg.mkPen('g', width=2))
+            
+            # Create motion sensors plot
+            self.motion_plot = pg.PlotWidget(title="Motion Sensors")
+            self.motion_plot.setLabel('left', 'Value')
+            self.motion_plot.setLabel('bottom', 'Time', units='s')
+            self.motion_plot.showGrid(x=True, y=True)
+            self.motion_plot.addLegend()
+            
+            # Add curves for acceleration and gyro data
+            self.accel_x_curve = self.motion_plot.plot(pen=pg.mkPen('r', width=2), name="Accel X")
+            self.accel_y_curve = self.motion_plot.plot(pen=pg.mkPen('g', width=2), name="Accel Y")
+            self.accel_z_curve = self.motion_plot.plot(pen=pg.mkPen('b', width=2), name="Accel Z")
+            self.gyro_x_curve = self.motion_plot.plot(pen=pg.mkPen('r', width=2, style=Qt.DashLine), name="Gyro X")
+            self.gyro_y_curve = self.motion_plot.plot(pen=pg.mkPen('g', width=2, style=Qt.DashLine), name="Gyro Y")
+            self.gyro_z_curve = self.motion_plot.plot(pen=pg.mkPen('b', width=2, style=Qt.DashLine), name="Gyro Z")
+            
+            # Create 3D attitude view
+            self.attitude_view = gl.GLViewWidget()
+            self.attitude_view.setCameraPosition(distance=15, elevation=30, azimuth=45)
+            self.attitude_view.setWindowTitle('3D Attitude')
+            
+            # Add coordinate grid
+            grid = gl.GLGridItem()
+            grid.setSize(10, 10, 1)
+            grid.setSpacing(1, 1, 1)
+            self.attitude_view.addItem(grid)
+            
+            # Add coordinate axes
+            axis_length = 5
+            x_axis = gl.GLLinePlotItem(pos=np.array([[0, 0, 0], [axis_length, 0, 0]]), color=(1, 0, 0, 1), width=2)
+            y_axis = gl.GLLinePlotItem(pos=np.array([[0, 0, 0], [0, axis_length, 0]]), color=(0, 1, 0, 1), width=2)
+            z_axis = gl.GLLinePlotItem(pos=np.array([[0, 0, 0], [0, 0, axis_length]]), color=(0, 0, 1, 1), width=2)
+            self.attitude_view.addItem(x_axis)
+            self.attitude_view.addItem(y_axis)
+            self.attitude_view.addItem(z_axis)
+            
+            # Create aircraft mesh and add to view
+            mesh = self.create_aircraft_mesh()
+            self.aircraft = gl.GLMeshItem(meshdata=mesh, smooth=True, color=(0.8, 0.8, 0.8, 1.0))
+            self.attitude_view.addItem(self.aircraft)
+            
+            # Create map view for GPS
+            try:
+                from PyQt5.QtWebEngineWidgets import QWebEngineView
+                self.map_view = QWebEngineView()
+                self.map_view.setWindowTitle('GPS Trajectory')
+                
+                # HTML for a simple Google Maps view
+                html = """
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <meta name="viewport" content="initial-scale=1.0, user-scalable=no">
+                    <meta charset="utf-8">
+                    <title>GPS Trajectory</title>
+                    <style>
+                        html, body, #map-canvas {
+                            height: 100%;
+                            margin: 0px;
+                            padding: 0px
+                        }
+                    </style>
+                    <script src="https://maps.googleapis.com/maps/api/js?v=3.exp"></script>
+                    <script>
+                        var map;
+                        function initialize() {
+                            var mapOptions = {
+                                zoom: 15,
+                                center: new google.maps.LatLng(0, 0),
+                                mapTypeId: google.maps.MapTypeId.SATELLITE
+                            };
+                            map = new google.maps.Map(document.getElementById('map-canvas'), mapOptions);
+                        }
+                        google.maps.event.addDomListener(window, 'load', initialize);
+                    </script>
+                </head>
+                <body>
+                    <div id="map-canvas"></div>
+                </body>
+                </html>
+                """
+                self.map_view.setHtml(html)
+            except ImportError:
+                print("QWebEngineView not available, using placeholder for GPS view")
+                self.map_view = QWidget()
+                placeholder_layout = QVBoxLayout(self.map_view)
+                placeholder_label = QLabel("GPS View (Web Engine not available)")
+                placeholder_layout.addWidget(placeholder_label)
+            
+            # Add all widgets to layout
+            layout.addWidget(self.altitude_plot, 0, 0)
+            layout.addWidget(self.pressure_plot, 1, 0)
+            layout.addWidget(self.temperature_plot, 2, 0)
+            layout.addWidget(self.motion_plot, 3, 0)
+            layout.addWidget(self.map_view, 0, 1)
+            layout.addWidget(self.attitude_view, 1, 1, 3, 1)  # Span 3 rows
+            
+            # Set column stretch factors (make right column larger)
+            layout.setColumnStretch(0, 1)
+            layout.setColumnStretch(1, 2)
+            
+            # Set layout to the widget
+            self.setLayout(layout)
+            
+            # Set up timer for updates
+            self.timer = QTimer()
+            self.timer.timeout.connect(self.update_plots)
+            self.timer.start(50)  # Update at 20 Hz
+            
+        except Exception as e:
+            print(f"Error setting up windows: {e}")
+            traceback.print_exc()
         
-        # Clear all curves
-        self.gps_curve.setData([], [])
-        self.altitude_curve.setData([], [])
-        self.pressure_curve.setData([], [])
-        self.temp_curve.setData([], [])
-        for curve in self.accel_curves + self.gyro_curves:
-            curve.setData([], [])
-        self.frame.setData(pos=np.zeros((6, 3)), color=np.zeros((6, 4)))
-        
-    def add_data_point(self, data_dict):
+    def create_aircraft_mesh(self):
+        """Create a simple aircraft mesh for 3D visualization."""
+        try:
+            # Create a simple aircraft shape
+            verts = np.array([
+                [0, 0, 0],     # Nose
+                [-1, 0.5, 0],  # Right wing tip
+                [-1, -0.5, 0], # Left wing tip
+                [-0.5, 0, 0],  # Body mid-point
+                [-1, 0, 0.5],  # Vertical stabilizer top
+            ])
+            
+            # Scale the aircraft
+            scale = 2.0
+            verts *= scale
+            
+            # Define the faces
+            faces = np.array([
+                [0, 1, 2],     # Wing triangle
+                [0, 3, 1],     # Right wing
+                [0, 2, 3],     # Left wing
+                [0, 4, 3],     # Vertical stabilizer
+            ])
+            
+            # Create the mesh data
+            mesh = gl.MeshData(vertexes=verts, faces=faces)
+            return mesh
+        except Exception as e:
+            print(f"Error creating aircraft mesh: {e}")
+            # Return a simple fallback mesh if there's an error
+            verts = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]])
+            faces = np.array([[0, 1, 2]])
+            return gl.MeshData(vertexes=verts, faces=faces)
+
+    def update_plots(self):
+        """Update all the plots with the current data."""
+        try:
+            # Only update if we have data
+            if len(self.timestamps) == 0:
+                return
+            
+            # Update 2D plots
+            self.altitude_curve.setData(self.timestamps, self.altitudes)
+            self.pressure_curve.setData(self.timestamps, self.pressures)
+            self.temperature_curve.setData(self.timestamps, self.temperatures)
+            
+            # Update motion plots
+            self.accel_x_curve.setData(self.timestamps, self.accelerations[:, 0])
+            self.accel_y_curve.setData(self.timestamps, self.accelerations[:, 1])
+            self.accel_z_curve.setData(self.timestamps, self.accelerations[:, 2])
+            self.gyro_x_curve.setData(self.timestamps, self.gyros[:, 0])
+            self.gyro_y_curve.setData(self.timestamps, self.gyros[:, 1])
+            self.gyro_z_curve.setData(self.timestamps, self.gyros[:, 2])
+            
+            # Update 3D attitude if we have quaternion data
+            if len(self.quaternions) > 0 and self.aircraft is not None:
+                # Get the latest quaternion
+                q = self.quaternions[-1]
+                
+                # Convert quaternion to rotation matrix
+                R = self.quaternion_to_rotation_matrix(q)
+                
+                # Apply rotation to the aircraft model
+                self.aircraft.setTransform(pg.Transform3D(R))
+        except Exception as e:
+            print(f"Error updating plots: {e}")
+
+    def quaternion_to_rotation_matrix(self, q):
+        """Convert quaternion to rotation matrix."""
+        try:
+            # Normalize the quaternion
+            norm = np.sqrt(q[0]*q[0] + q[1]*q[1] + q[2]*q[2] + q[3]*q[3])
+            if norm < 1e-10:
+                return np.identity(4)
+            
+            q = q / norm
+            
+            # Calculate rotation matrix
+            xx, xy, xz = q[1]*q[1], q[1]*q[2], q[1]*q[3]
+            yy, yz, zz = q[2]*q[2], q[2]*q[3], q[3]*q[3]
+            wx, wy, wz = q[0]*q[1], q[0]*q[2], q[0]*q[3]
+            
+            rot_matrix = np.array([
+                [1-2*(yy+zz), 2*(xy-wz), 2*(xz+wy), 0],
+                [2*(xy+wz), 1-2*(xx+zz), 2*(yz-wx), 0],
+                [2*(xz-wy), 2*(yz+wx), 1-2*(xx+yy), 0],
+                [0, 0, 0, 1]
+            ], dtype=np.float32)
+            
+            return rot_matrix
+        except Exception as e:
+            print(f"Error converting quaternion to rotation matrix: {e}")
+            return np.identity(4)
+
+    def add_data_point(self, data_point):
         """Add a new data point to all plots."""
         try:
-            # Extract data
-            timestamp = float(data_dict.get('Timestamp', 0))
-            lat = float(data_dict.get('Lat', 0))
-            lon = float(data_dict.get('Long', 0))
-            alt = float(data_dict.get('Alt', 0))
-            press = float(data_dict.get('Pressure', 0))
-            temp = float(data_dict.get('Temperature', 0))
+            print(f"Adding data point to plots: {data_point}")
             
-            ax = float(data_dict.get('ICM_AccelX', 0))
-            ay = float(data_dict.get('ICM_AccelY', 0))
-            az = float(data_dict.get('ICM_AccelZ', 0))
+            # Extract timestamp
+            if 'Timestamp' in data_point and data_point['Timestamp'] is not None:
+                timestamp = float(data_point['Timestamp'])
+                self.timestamps = np.append(self.timestamps, timestamp)
+            else:
+                # If no timestamp, use incremental counter
+                if len(self.timestamps) == 0:
+                    next_timestamp = 0
+                else:
+                    next_timestamp = self.timestamps[-1] + 1
+                self.timestamps = np.append(self.timestamps, next_timestamp)
             
-            gx = float(data_dict.get('ICM_GyroX', 0))
-            gy = float(data_dict.get('ICM_GyroY', 0))
-            gz = float(data_dict.get('ICM_GyroZ', 0))
+            # Extract altitude
+            if 'Alt' in data_point and data_point['Alt'] is not None:
+                self.altitudes = np.append(self.altitudes, float(data_point['Alt']))
+            elif len(self.altitudes) > 0:
+                # If no new data, repeat last value
+                self.altitudes = np.append(self.altitudes, self.altitudes[-1])
+            else:
+                self.altitudes = np.append(self.altitudes, 0)
             
-            qw = float(data_dict.get('ICM_QuatW', 0))
-            qx = float(data_dict.get('ICM_QuatX', 0))
-            qy = float(data_dict.get('ICM_QuatY', 0))
-            qz = float(data_dict.get('ICM_QuatZ', 0))
+            # Extract pressure
+            if 'Pressure' in data_point and data_point['Pressure'] is not None:
+                self.pressures = np.append(self.pressures, float(data_point['Pressure']))
+            elif len(self.pressures) > 0:
+                self.pressures = np.append(self.pressures, self.pressures[-1])
+            else:
+                self.pressures = np.append(self.pressures, 0)
             
-            # Append data to arrays
-            self.timestamps = np.append(self.timestamps, timestamp)
-            self.altitudes = np.append(self.altitudes, alt)
-            self.pressures = np.append(self.pressures, press)
-            self.temperatures = np.append(self.temperatures, temp)
-            self.latitudes = np.append(self.latitudes, lat)
-            self.longitudes = np.append(self.longitudes, lon)
+            # Extract temperature
+            if 'Temperature' in data_point and data_point['Temperature'] is not None:
+                self.temperatures = np.append(self.temperatures, float(data_point['Temperature']))
+            elif len(self.temperatures) > 0:
+                self.temperatures = np.append(self.temperatures, self.temperatures[-1])
+            else:
+                self.temperatures = np.append(self.temperatures, 0)
             
-            # Handle 2D arrays properly
-            self.accelerations = np.vstack([self.accelerations, [ax, ay, az]]) if len(self.accelerations) > 0 else np.array([[ax, ay, az]])
-            self.gyros = np.vstack([self.gyros, [gx, gy, gz]]) if len(self.gyros) > 0 else np.array([[gx, gy, gz]])
-            self.quaternions = np.vstack([self.quaternions, [qw, qx, qy, qz]]) if len(self.quaternions) > 0 else np.array([[qw, qx, qy, qz]])
+            # Extract GPS
+            if 'Lat' in data_point and 'Long' in data_point and data_point['Lat'] is not None and data_point['Long'] is not None:
+                self.latitudes = np.append(self.latitudes, float(data_point['Lat']))
+                self.longitudes = np.append(self.longitudes, float(data_point['Long']))
+            elif len(self.latitudes) > 0 and len(self.longitudes) > 0:
+                self.latitudes = np.append(self.latitudes, self.latitudes[-1])
+                self.longitudes = np.append(self.longitudes, self.longitudes[-1])
+            else:
+                self.latitudes = np.append(self.latitudes, 0)
+                self.longitudes = np.append(self.longitudes, 0)
             
-            # Limit data points
+            # Extract acceleration
+            new_accel = np.zeros(3)
+            if 'ICM_AccelX' in data_point and 'ICM_AccelY' in data_point and 'ICM_AccelZ' in data_point and \
+               data_point['ICM_AccelX'] is not None and data_point['ICM_AccelY'] is not None and data_point['ICM_AccelZ'] is not None:
+                new_accel[0] = float(data_point['ICM_AccelX'])
+                new_accel[1] = float(data_point['ICM_AccelY'])
+                new_accel[2] = float(data_point['ICM_AccelZ'])
+            elif len(self.accelerations) > 0:
+                new_accel = self.accelerations[-1]
+            
+            self.accelerations = np.vstack([self.accelerations, new_accel]) if len(self.accelerations) > 0 else np.array([new_accel])
+            
+            # Extract gyro
+            new_gyro = np.zeros(3)
+            if 'ICM_GyroX' in data_point and 'ICM_GyroY' in data_point and 'ICM_GyroZ' in data_point and \
+               data_point['ICM_GyroX'] is not None and data_point['ICM_GyroY'] is not None and data_point['ICM_GyroZ'] is not None:
+                new_gyro[0] = float(data_point['ICM_GyroX'])
+                new_gyro[1] = float(data_point['ICM_GyroY'])
+                new_gyro[2] = float(data_point['ICM_GyroZ'])
+            elif len(self.gyros) > 0:
+                new_gyro = self.gyros[-1]
+            
+            self.gyros = np.vstack([self.gyros, new_gyro]) if len(self.gyros) > 0 else np.array([new_gyro])
+            
+            # Extract quaternion
+            new_quat = np.zeros(4)
+            if 'ICM_QuatW' in data_point and 'ICM_QuatX' in data_point and 'ICM_QuatY' in data_point and 'ICM_QuatZ' in data_point and \
+               data_point['ICM_QuatW'] is not None and data_point['ICM_QuatX'] is not None and data_point['ICM_QuatY'] is not None and data_point['ICM_QuatZ'] is not None:
+                new_quat[0] = float(data_point['ICM_QuatW'])
+                new_quat[1] = float(data_point['ICM_QuatX'])
+                new_quat[2] = float(data_point['ICM_QuatY'])
+                new_quat[3] = float(data_point['ICM_QuatZ'])
+            elif len(self.quaternions) > 0:
+                new_quat = self.quaternions[-1]
+            
+            self.quaternions = np.vstack([self.quaternions, new_quat]) if len(self.quaternions) > 0 else np.array([new_quat])
+            
+            # Limit data arrays to max_points
             if len(self.timestamps) > self.max_points:
                 self.timestamps = self.timestamps[-self.max_points:]
                 self.altitudes = self.altitudes[-self.max_points:]
@@ -227,67 +431,111 @@ class RealTimePlotWidget(QWidget):
                 self.gyros = self.gyros[-self.max_points:]
                 self.quaternions = self.quaternions[-self.max_points:]
             
-            # Update plots
-            # GPS Plot
-            if len(self.longitudes) > 0 and len(self.latitudes) > 0:
-                self.gps_curve.setData(self.longitudes, self.latitudes)
+            # Update Google Maps if we have GPS data
+            if len(self.latitudes) > 0 and len(self.longitudes) > 0:
+                self.update_map()
             
-            # Altitude Plot
-            if len(self.timestamps) > 0 and len(self.altitudes) > 0:
-                self.altitude_curve.setData(self.timestamps, self.altitudes)
-            
-            # Environment Plot
-            if len(self.timestamps) > 0:
-                if len(self.pressures) > 0:
-                    self.pressure_curve.setData(self.timestamps, self.pressures)
-                if len(self.temperatures) > 0:
-                    self.temp_curve.setData(self.timestamps, self.temperatures)
-            
-            # Motion Plot
-            if len(self.timestamps) > 0:
-                for i, curve in enumerate(self.accel_curves):
-                    if len(self.accelerations) > 0:
-                        curve.setData(self.timestamps, self.accelerations[:, i])
-                for i, curve in enumerate(self.gyro_curves):
-                    if len(self.gyros) > 0:
-                        curve.setData(self.timestamps, self.gyros[:, i])
-            
-            # Update 3D attitude
-            if len(self.quaternions) > 0:
-                q = self.quaternions[-1]
-                R = self.quaternion_to_rotation_matrix(q)
-                
-                # Update coordinate frame
-                points = np.array([
-                    [0, 0, 0],
-                    [5, 0, 0],  # X-axis
-                    [0, 5, 0],  # Y-axis
-                    [0, 0, 5]   # Z-axis
-                ])
-                
-                # Transform points
-                transformed_points = np.dot(points, R.T)
-                
-                # Update frame lines
-                x_points = np.array([transformed_points[0], transformed_points[1]])
-                y_points = np.array([transformed_points[0], transformed_points[2]])
-                z_points = np.array([transformed_points[0], transformed_points[3]])
-                
-                self.frame.setData(pos=np.vstack([x_points, y_points, z_points]),
-                                 color=np.array([[1,0,0,1], [1,0,0,1],  # Red for X
-                                               [0,1,0,1], [0,1,0,1],  # Green for Y
-                                               [0,0,1,1], [0,0,1,1]]))  # Blue for Z
-                
+            print(f"Data arrays updated: timestamps length = {len(self.timestamps)}")
+            print(f"All plots updated successfully")
         except Exception as e:
-            print(f"Error updating plots: {e}")
+            print(f"Error adding data point to plots: {e}")
+            traceback.print_exc()
+    
+    def update_map(self):
+        """Update the Google Maps view with current GPS data."""
+        try:
+            if hasattr(self, 'map_view') and hasattr(self.map_view, 'setHtml'):
+                # Only update if we have at least one GPS point
+                if len(self.latitudes) > 0 and len(self.longitudes) > 0:
+                    # Get the last position
+                    lat = self.latitudes[-1]
+                    lng = self.longitudes[-1]
+                    
+                    # Create path string for all points
+                    path_points = ""
+                    for i in range(min(len(self.latitudes), len(self.longitudes))):
+                        path_points += f"new google.maps.LatLng({self.latitudes[i]}, {self.longitudes[i]}),\n"
+                    
+                    # Create HTML with updated map center and path
+                    html = f"""
+                    <!DOCTYPE html>
+                    <html>
+                    <head>
+                        <meta name="viewport" content="initial-scale=1.0, user-scalable=no">
+                        <meta charset="utf-8">
+                        <title>GPS Trajectory</title>
+                        <style>
+                            html, body, #map-canvas {{
+                                height: 100%;
+                                margin: 0px;
+                                padding: 0px
+                            }}
+                        </style>
+                        <script src="https://maps.googleapis.com/maps/api/js?v=3.exp"></script>
+                        <script>
+                            var map;
+                            function initialize() {{
+                                var mapOptions = {{
+                                    zoom: 15,
+                                    center: new google.maps.LatLng({lat}, {lng}),
+                                    mapTypeId: google.maps.MapTypeId.SATELLITE
+                                }};
+                                map = new google.maps.Map(document.getElementById('map-canvas'), mapOptions);
+                                
+                                // Add flight path
+                                var flightPath = new google.maps.Polyline({{
+                                    path: [
+                                        {path_points}
+                                    ],
+                                    geodesic: true,
+                                    strokeColor: '#FF0000',
+                                    strokeOpacity: 1.0,
+                                    strokeWeight: 2
+                                }});
+                                
+                                flightPath.setMap(map);
+                                
+                                // Add current position marker
+                                var marker = new google.maps.Marker({{
+                                    position: new google.maps.LatLng({lat}, {lng}),
+                                    map: map,
+                                    title: 'Current Position'
+                                }});
+                            }}
+                            google.maps.event.addDomListener(window, 'load', initialize);
+                        </script>
+                    </head>
+                    <body>
+                        <div id="map-canvas"></div>
+                    </body>
+                    </html>
+                    """
+                    
+                    # Update the map
+                    self.map_view.setHtml(html)
+        except Exception as e:
+            print(f"Error updating map: {e}")
+    
+    def clear_plots(self):
+        """Clear all plot data."""
+        try:
+            # Reset data arrays
+            self.timestamps = np.array([])
+            self.altitudes = np.array([])
+            self.pressures = np.array([])
+            self.temperatures = np.array([])
+            self.latitudes = np.array([])
+            self.longitudes = np.array([])
+            self.accelerations = np.array([]).reshape(0, 3)
+            self.gyros = np.array([]).reshape(0, 3)
+            self.quaternions = np.array([]).reshape(0, 4)
             
-    def quaternion_to_rotation_matrix(self, q):
-        w, x, y, z = q
-        return np.array([
-            [1 - 2*y*y - 2*z*z,     2*x*y - 2*z*w,     2*x*z + 2*y*w],
-            [    2*x*y + 2*z*w, 1 - 2*x*x - 2*z*z,     2*y*z - 2*x*w],
-            [    2*x*z - 2*y*w,     2*y*z + 2*x*w, 1 - 2*x*x - 2*y*y]
-        ])
+            # Clear plot curves
+            self.update_plots()
+            
+            print("All plots cleared")
+        except Exception as e:
+            print(f"Error clearing plots: {e}")
 
 
 class StaticPlotWidget(QWidget):
