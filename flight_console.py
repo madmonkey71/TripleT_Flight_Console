@@ -53,7 +53,6 @@ class DataReceiverThread(QThread):
             try:
                 data = self.comm_manager.get_queued_data(timeout=0.1)
                 if data:
-                    print(f"DataReceiverThread received: {data[:100]}...")
                     self.data_received.emit(data)
                 # Add a small sleep to prevent busy-waiting if queue is often empty
                 # time.sleep(0.01) # Optional: uncomment if CPU usage is high
@@ -100,192 +99,134 @@ class RealTimePlotWidget(QWidget):
         # For Google Maps
         self.maps_html = None
         
-        # Create main layout for the widget
-        self.layout = QGridLayout(self)
-        self.layout.setContentsMargins(10, 10, 10, 10)
-        self.layout.setSpacing(10)
-        
         # Setup plot windows
         self.setup_windows()
         
     def setup_windows(self):
-        """Set up all visualization windows and layouts."""
+        """Set up the visualization windows."""
+        # Create plots for altitude, pressure and temperature
+        self.altitude_plot = pg.PlotWidget()
+        self.altitude_plot.setTitle("Altitude")
+        self.altitude_plot.setLabel('left', 'Altitude', units='m')
+        self.altitude_plot.setLabel('bottom', 'Time', units='s')
+        self.altitude_curve = self.altitude_plot.plot(pen='y')
+        
+        # Separate plots for pressure and temperature
+        self.pressure_plot = pg.PlotWidget()
+        self.pressure_plot.setTitle("Pressure")
+        self.pressure_plot.setLabel('left', 'Pressure', units='hPa')
+        self.pressure_plot.setLabel('bottom', 'Time', units='s')
+        self.pressure_curve = self.pressure_plot.plot(pen='c')
+        
+        self.temperature_plot = pg.PlotWidget()
+        self.temperature_plot.setTitle("Temperature")
+        self.temperature_plot.setLabel('left', 'Temperature', units='°C')
+        self.temperature_plot.setLabel('bottom', 'Time', units='s')
+        self.temperature_curve = self.temperature_plot.plot(pen='r')
+        
+        # Create plot for accelerometer and gyroscope data
+        self.motion_plot = pg.PlotWidget()
+        self.motion_plot.setTitle("Motion")
+        self.motion_plot.addLegend()
+        
+        # Accelerometer curves
+        self.accel_x_curve = self.motion_plot.plot(pen='r', name='Accel X')
+        self.accel_y_curve = self.motion_plot.plot(pen='g', name='Accel Y')
+        self.accel_z_curve = self.motion_plot.plot(pen='b', name='Accel Z')
+        
+        # Gyroscope curves
+        self.gyro_x_curve = self.motion_plot.plot(pen=(255, 0, 0, 100), name='Gyro X')
+        self.gyro_y_curve = self.motion_plot.plot(pen=(0, 255, 0, 100), name='Gyro Y')
+        self.gyro_z_curve = self.motion_plot.plot(pen=(0, 0, 255, 100), name='Gyro Z')
+        
+        # Create 3D plot for attitude visualization
+        self.attitude_view = gl.GLViewWidget()
+        self.attitude_view.setWindowTitle('Attitude')
+        self.attitude_view.setCameraPosition(distance=5, elevation=30, azimuth=45)
+        
+        # Create a grid for the 3D view
+        grid = gl.GLGridItem()
+        grid.setSize(10, 10)
+        grid.setSpacing(1, 1)
+        self.attitude_view.addItem(grid)
+        
+        # Create orientation lines (x, y, z axes)
+        # X-axis (Red)
+        x_axis_pts = np.array([[0, 0, 0], [1, 0, 0]])
+        self.orientation_x = gl.GLLinePlotItem(pos=x_axis_pts, color=(1, 0, 0, 1), width=2)
+        self.attitude_view.addItem(self.orientation_x)
+        
+        # Y-axis (Green)
+        y_axis_pts = np.array([[0, 0, 0], [0, 1, 0]])
+        self.orientation_y = gl.GLLinePlotItem(pos=y_axis_pts, color=(0, 1, 0, 1), width=2)
+        self.attitude_view.addItem(self.orientation_y)
+        
+        # Z-axis (Blue)
+        z_axis_pts = np.array([[0, 0, 0], [0, 0, 1]])
+        self.orientation_z = gl.GLLinePlotItem(pos=z_axis_pts, color=(0, 0, 1, 1), width=2)
+        self.attitude_view.addItem(self.orientation_z)
+        
+        # Create main layout for the widget
+        layout = QVBoxLayout()
+        
+        # Top row with 3D view and GPS
+        top_row = QHBoxLayout()
+        
+        # Make the 3D view larger
+        top_row.addWidget(self.attitude_view, 2)  # Higher stretch factor
+        
+        # Initialize map view if WebEngine is available
+        map_container = QWidget()
+        map_layout = QVBoxLayout(map_container)
+        map_layout.setContentsMargins(0, 0, 0, 0)
+        
         try:
-            # Create info panel for displaying data values
-            self.info_panel = QWidget(self)
-            info_layout = QHBoxLayout(self.info_panel)
-            info_layout.setContentsMargins(5, 5, 5, 5)
-            info_layout.setSpacing(20)
-            
-            # Add satellite info
-            sat_label = QLabel("Satellites:", self.info_panel)
-            sat_label.setStyleSheet("font-weight: bold;")
-            self.sat_value = QLabel("0", self.info_panel)
-            info_layout.addWidget(sat_label)
-            info_layout.addWidget(self.sat_value)
-            
-            # Add speed info
-            speed_label = QLabel("Speed (km/h):", self.info_panel)
-            speed_label.setStyleSheet("font-weight: bold;")
-            self.speed_value = QLabel("0.0", self.info_panel)
-            info_layout.addWidget(speed_label)
-            info_layout.addWidget(self.speed_value)
-            
-            # Add heading info
-            heading_label = QLabel("Heading (°):", self.info_panel)
-            heading_label.setStyleSheet("font-weight: bold;")
-            self.heading_value = QLabel("0.0", self.info_panel)
-            info_layout.addWidget(heading_label)
-            info_layout.addWidget(self.heading_value)
-            
-            info_layout.addStretch(1)
-            
-            # Create altitude plot
-            self.altitude_plot = pg.PlotWidget(title="Altitude", parent=self)
-            self.altitude_plot.setLabel('left', 'Altitude', units='m')
-            self.altitude_plot.setLabel('bottom', 'Time', units='s')
-            self.altitude_plot.showGrid(x=True, y=True)
-            self.altitude_curve = self.altitude_plot.plot(pen=pg.mkPen('b', width=2))
-            
-            # Create pressure plot
-            self.pressure_plot = pg.PlotWidget(title="Pressure", parent=self)
-            self.pressure_plot.setLabel('left', 'Pressure', units='hPa')
-            self.pressure_plot.setLabel('bottom', 'Time', units='s')
-            self.pressure_plot.showGrid(x=True, y=True)
-            self.pressure_curve = self.pressure_plot.plot(pen=pg.mkPen('r', width=2))
-            
-            # Create temperature plot
-            self.temperature_plot = pg.PlotWidget(title="Temperature", parent=self)
-            self.temperature_plot.setLabel('left', 'Temperature', units='°C')
-            self.temperature_plot.setLabel('bottom', 'Time', units='s')
-            self.temperature_plot.showGrid(x=True, y=True)
-            self.temperature_curve = self.temperature_plot.plot(pen=pg.mkPen('g', width=2))
-            
-            # Create motion sensors plot
-            self.motion_plot = pg.PlotWidget(title="Motion Sensors", parent=self)
-            self.motion_plot.setLabel('left', 'Value')
-            self.motion_plot.setLabel('bottom', 'Time', units='s')
-            self.motion_plot.showGrid(x=True, y=True)
-            self.motion_plot.addLegend()
-            
-            # Add curves for acceleration and gyro data
-            self.accel_x_curve = self.motion_plot.plot(pen=pg.mkPen('r', width=2), name="Accel X")
-            self.accel_y_curve = self.motion_plot.plot(pen=pg.mkPen('g', width=2), name="Accel Y")
-            self.accel_z_curve = self.motion_plot.plot(pen=pg.mkPen('b', width=2), name="Accel Z")
-            self.gyro_x_curve = self.motion_plot.plot(pen=pg.mkPen('r', width=2, style=Qt.DashLine), name="Gyro X")
-            self.gyro_y_curve = self.motion_plot.plot(pen=pg.mkPen('g', width=2, style=Qt.DashLine), name="Gyro Y")
-            self.gyro_z_curve = self.motion_plot.plot(pen=pg.mkPen('b', width=2, style=Qt.DashLine), name="Gyro Z")
-            
-            # Create 3D attitude view
-            self.attitude_view = gl.GLViewWidget(parent=self)
-            self.attitude_view.setCameraPosition(distance=15, elevation=30, azimuth=45)
-            
-            # Add coordinate grid
-            grid = gl.GLGridItem()
-            grid.setSize(10, 10, 1)
-            grid.setSpacing(1, 1, 1)
-            self.attitude_view.addItem(grid)
-            
-            # Add coordinate axes
-            axis_length = 5
-            x_axis = gl.GLLinePlotItem(pos=np.array([[0, 0, 0], [axis_length, 0, 0]]), color=(1, 0, 0, 1), width=2)
-            y_axis = gl.GLLinePlotItem(pos=np.array([[0, 0, 0], [0, axis_length, 0]]), color=(0, 1, 0, 1), width=2)
-            z_axis = gl.GLLinePlotItem(pos=np.array([[0, 0, 0], [0, 0, axis_length]]), color=(0, 0, 1, 1), width=2)
-            self.attitude_view.addItem(x_axis)
-            self.attitude_view.addItem(y_axis)
-            self.attitude_view.addItem(z_axis)
-            
-            # Create aircraft mesh and add to view
-            mesh = self.create_aircraft_mesh()
-            self.aircraft = gl.GLMeshItem(meshdata=mesh, smooth=True, color=(0.8, 0.8, 0.8, 1.0))
-            self.attitude_view.addItem(self.aircraft)
-            
-            # Create map view for GPS
-            try:
-                from PyQt5.QtWebEngineWidgets import QWebEngineView
-                self.map_view = QWebEngineView(parent=self)
-                
-                # HTML for a simple Google Maps view
-                html = """
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <meta name="viewport" content="initial-scale=1.0, user-scalable=no">
-                    <meta charset="utf-8">
-                    <title>GPS Trajectory</title>
-                    <style>
-                        html, body, #map-canvas {
-                            height: 100%;
-                            margin: 0px;
-                            padding: 0px
-                        }
-                    </style>
-                    <script src="https://maps.googleapis.com/maps/api/js?v=3.exp"></script>
-                    <script>
-                        var map;
-                        function initialize() {
-                            var mapOptions = {
-                                zoom: 15,
-                                center: new google.maps.LatLng(0, 0),
-                                mapTypeId: google.maps.MapTypeId.SATELLITE
-                            };
-                            map = new google.maps.Map(document.getElementById('map-canvas'), mapOptions);
-                        }
-                        google.maps.event.addDomListener(window, 'load', initialize);
-                    </script>
-                </head>
-                <body>
-                    <div id="map-canvas"></div>
-                </body>
-                </html>
-                """
-                self.map_view.setHtml(html)
-            except ImportError:
-                print("QWebEngineView not available, using placeholder for GPS view")
-                self.map_view = QWidget(parent=self)
-                placeholder_layout = QVBoxLayout(self.map_view)
-                placeholder_label = QLabel("GPS View (Web Engine not available)")
-                placeholder_layout.addWidget(placeholder_label)
-            
-            # Add all widgets to the main layout
-            # First row is info panel spanning all columns
-            self.layout.addWidget(self.info_panel, 0, 0, 1, 2)
-            
-            # Left column - stacked plots
-            self.layout.addWidget(self.altitude_plot, 1, 0)
-            self.layout.addWidget(self.pressure_plot, 2, 0)
-            self.layout.addWidget(self.temperature_plot, 3, 0)
-            self.layout.addWidget(self.motion_plot, 4, 0)
-            
-            # Right column - Map and 3D view (each taking 2 rows)
-            self.layout.addWidget(self.map_view, 1, 1, 2, 1)  # Span 2 rows to make it larger
-            self.layout.addWidget(self.attitude_view, 3, 1, 2, 1)  # Span 2 rows
-            
-            # Set column stretch factors (make right column larger)
-            self.layout.setColumnStretch(0, 1)
-            self.layout.setColumnStretch(1, 2)
-            
-            # Set up timer for updates
-            self.timer = QTimer()
-            self.timer.timeout.connect(self.update_plots)
-            self.timer.start(50)  # Update at 20 Hz
-            
-            # Make sure all widgets are visible
-            self.info_panel.show()
-            self.altitude_plot.show()
-            self.pressure_plot.show()
-            self.temperature_plot.show()
-            self.motion_plot.show()
-            self.map_view.show()
-            self.attitude_view.show()
-            
-            # Initial update to make plots visible
-            self.update()
-            self.app.processEvents()
-            
+            if 'QWebEngineView' in globals():
+                self.map_view = QWebEngineView()
+                print("DEBUG: QWebEngineView initialized successfully")
+                map_layout.addWidget(self.map_view)
+            else:
+                print("DEBUG: QWebEngineView not available, falling back to GPS plot")
+                # Add placeholder for GPS if WebEngine is not available
+                gps_plot = pg.PlotWidget()
+                gps_plot.setTitle("GPS Position")
+                gps_plot.setLabel('left', 'Latitude')
+                gps_plot.setLabel('bottom', 'Longitude')
+                # Store reference to the GPS plot
+                self.gps_plot = gps_plot
+                map_layout.addWidget(gps_plot)
+                self.map_view = None
         except Exception as e:
-            print(f"Error setting up windows: {e}")
-            traceback.print_exc()
+            print(f"Error initializing map view: {e}")
+            # Add placeholder for GPS
+            gps_plot = pg.PlotWidget()
+            gps_plot.setTitle("GPS Position")
+            gps_plot.setLabel('left', 'Latitude')
+            gps_plot.setLabel('bottom', 'Longitude')
+            # Store reference to the GPS plot
+            self.gps_plot = gps_plot
+            map_layout.addWidget(gps_plot)
+            self.map_view = None
+        
+        top_row.addWidget(map_container, 1)
+        
+        layout.addLayout(top_row)
+        
+        # Middle row with altitude, pressure and temperature
+        middle_row = QHBoxLayout()
+        middle_row.addWidget(self.altitude_plot)
+        middle_row.addWidget(self.pressure_plot)
+        middle_row.addWidget(self.temperature_plot)
+        layout.addLayout(middle_row)
+        
+        # Bottom row with accelerometer and gyroscope data
+        layout.addWidget(self.motion_plot)
+        
+        # Set margins and spacing
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(10)
+        
+        self.setLayout(layout)
         
     def create_aircraft_mesh(self):
         """Create a simple aircraft mesh for 3D visualization."""
@@ -322,18 +263,22 @@ class RealTimePlotWidget(QWidget):
             return gl.MeshData(vertexes=verts, faces=faces)
 
     def update_plots(self):
-        """Update all the plots with the current data."""
+        """Update all plots with the latest data."""
         try:
-            # Only update if we have data
-            if len(self.timestamps) == 0:
-                return
             
             # Update 2D plots
-            self.altitude_curve.setData(self.timestamps, self.altitudes)
-            self.pressure_curve.setData(self.timestamps, self.pressures)
-            self.temperature_curve.setData(self.timestamps, self.temperatures)
+            if len(self.altitudes) > 0:
+                self.altitude_curve.setData(self.timestamps, self.altitudes)
             
-            # Update motion plots
+            # Update pressure plot
+            if len(self.pressures) > 0:
+                self.pressure_curve.setData(self.timestamps, self.pressures)
+            
+            # Update temperature plot
+            if len(self.temperatures) > 0:
+                self.temperature_curve.setData(self.timestamps, self.temperatures)
+            
+            # Update motion sensors plot
             if len(self.accelerations) > 0:
                 self.accel_x_curve.setData(self.timestamps, self.accelerations[:, 0])
                 self.accel_y_curve.setData(self.timestamps, self.accelerations[:, 1])
@@ -344,16 +289,29 @@ class RealTimePlotWidget(QWidget):
                 self.gyro_y_curve.setData(self.timestamps, self.gyros[:, 1])
                 self.gyro_z_curve.setData(self.timestamps, self.gyros[:, 2])
             
-            # Update 3D attitude if we have quaternion data
-            if len(self.quaternions) > 0 and self.aircraft is not None:
+            # Update 3D attitude if quaternions are available
+            if len(self.quaternions) > 0:
                 # Get the latest quaternion
                 q = self.quaternions[-1]
                 
                 # Convert quaternion to rotation matrix
-                R = self.quaternion_to_rotation_matrix(q)
+                R = np.array([
+                    [1 - 2*q[2]**2 - 2*q[3]**2, 2*q[1]*q[2] - 2*q[0]*q[3], 2*q[1]*q[3] + 2*q[0]*q[2]],
+                    [2*q[1]*q[2] + 2*q[0]*q[3], 1 - 2*q[1]**2 - 2*q[3]**2, 2*q[2]*q[3] - 2*q[0]*q[1]],
+                    [2*q[1]*q[3] - 2*q[0]*q[2], 2*q[2]*q[3] + 2*q[0]*q[1], 1 - 2*q[1]**2 - 2*q[2]**2]
+                ])
                 
-                # Apply rotation to the aircraft model
-                self.aircraft.setTransform(pg.Transform3D(R))
+                # Convert 3x3 rotation matrix to 4x4 transformation matrix
+                T = np.eye(4)  # Create 4x4 identity matrix
+                T[0:3, 0:3] = R  # Set the upper-left 3x3 sub-matrix to R
+                
+                # Apply rotation to orientation lines
+                # Convert numpy array to list for Transform3D
+                matrix_list = T.tolist()
+                transform = pg.Transform3D(matrix_list)
+                self.orientation_x.setTransform(transform)
+                self.orientation_y.setTransform(transform)
+                self.orientation_z.setTransform(transform)
             
             # Force update of all plot widgets
             self.altitude_plot.update()
@@ -362,44 +320,18 @@ class RealTimePlotWidget(QWidget):
             self.motion_plot.update()
             self.attitude_view.update()
             
-            # Process the application events to ensure plots are refreshed
+            # Process Qt events to keep UI responsive
             self.app.processEvents()
             
         except Exception as e:
             print(f"Error updating plots: {e}")
+            import traceback
             traceback.print_exc()
-
-    def quaternion_to_rotation_matrix(self, q):
-        """Convert quaternion to rotation matrix."""
-        try:
-            # Normalize the quaternion
-            norm = np.sqrt(q[0]*q[0] + q[1]*q[1] + q[2]*q[2] + q[3]*q[3])
-            if norm < 1e-10:
-                return np.identity(4)
-            
-            q = q / norm
-            
-            # Calculate rotation matrix
-            xx, xy, xz = q[1]*q[1], q[1]*q[2], q[1]*q[3]
-            yy, yz, zz = q[2]*q[2], q[2]*q[3], q[3]*q[3]
-            wx, wy, wz = q[0]*q[1], q[0]*q[2], q[0]*q[3]
-            
-            rot_matrix = np.array([
-                [1-2*(yy+zz), 2*(xy-wz), 2*(xz+wy), 0],
-                [2*(xy+wz), 1-2*(xx+zz), 2*(yz-wx), 0],
-                [2*(xz-wy), 2*(yz+wx), 1-2*(xx+yy), 0],
-                [0, 0, 0, 1]
-            ], dtype=np.float32)
-            
-            return rot_matrix
-        except Exception as e:
-            print(f"Error converting quaternion to rotation matrix: {e}")
-            return np.identity(4)
 
     def add_data_point(self, data_point):
         """Add a new data point to all plots."""
         try:
-            print(f"Adding data point to plots: {data_point}")
+            print(f"DEBUG: add_data_point called with data: {data_point}")
             
             # Extract timestamp
             if 'Timestamp' in data_point and data_point['Timestamp'] is not None:
@@ -415,7 +347,8 @@ class RealTimePlotWidget(QWidget):
             
             # Extract altitude
             if 'Alt' in data_point and data_point['Alt'] is not None:
-                self.altitudes = np.append(self.altitudes, float(data_point['Alt']))
+                alt_val = float(data_point['Alt'])
+                self.altitudes = np.append(self.altitudes, alt_val)
             elif len(self.altitudes) > 0:
                 # If no new data, repeat last value
                 self.altitudes = np.append(self.altitudes, self.altitudes[-1])
@@ -483,21 +416,23 @@ class RealTimePlotWidget(QWidget):
                 new_quat[3] = float(data_point['ICM_QuatZ'])
             elif len(self.quaternions) > 0:
                 new_quat = self.quaternions[-1]
+            else:
+                # Default orientation if no quaternion data is available
+                # Identity quaternion (no rotation)
+                new_quat = np.array([1.0, 0.0, 0.0, 0.0])
+                print("DEBUG: Using default identity quaternion")
             
             self.quaternions = np.vstack([self.quaternions, new_quat]) if len(self.quaternions) > 0 else np.array([new_quat])
             
             # Update text display data
             if 'Sats' in data_point and data_point['Sats'] is not None:
                 self.current_sats = int(float(data_point['Sats']))
-                self.sat_value.setText(str(self.current_sats))
-                
+            
             if 'Speed' in data_point and data_point['Speed'] is not None:
                 self.current_speed = float(data_point['Speed'])
-                self.speed_value.setText(f"{self.current_speed:.2f}")
-                
+            
             if 'Heading' in data_point and data_point['Heading'] is not None:
                 self.current_heading = float(data_point['Heading'])
-                self.heading_value.setText(f"{self.current_heading:.1f}")
             
             # Limit data arrays to max_points
             if len(self.timestamps) > self.max_points:
@@ -518,8 +453,6 @@ class RealTimePlotWidget(QWidget):
             # Explicitly update the plots
             self.update_plots()
             
-            print(f"Data arrays updated: timestamps length = {len(self.timestamps)}")
-            print(f"All plots updated successfully")
         except Exception as e:
             print(f"Error adding data point to plots: {e}")
             traceback.print_exc()
@@ -527,77 +460,116 @@ class RealTimePlotWidget(QWidget):
     def update_map(self):
         """Update the Google Maps view with current GPS data."""
         try:
-            if hasattr(self, 'map_view') and hasattr(self.map_view, 'setHtml'):
-                # Only update if we have at least one GPS point
-                if len(self.latitudes) > 0 and len(self.longitudes) > 0:
-                    # Get the last position
-                    lat = self.latitudes[-1]
-                    lng = self.longitudes[-1]
-                    
-                    # Create path string for all points
-                    path_points = ""
-                    for i in range(min(len(self.latitudes), len(self.longitudes))):
-                        path_points += f"new google.maps.LatLng({self.latitudes[i]}, {self.longitudes[i]}),\n"
-                    
-                    # Create HTML with updated map center and path
-                    html = f"""
-                    <!DOCTYPE html>
-                    <html>
-                    <head>
-                        <meta name="viewport" content="initial-scale=1.0, user-scalable=no">
-                        <meta charset="utf-8">
-                        <title>GPS Trajectory</title>
-                        <style>
-                            html, body, #map-canvas {{
-                                height: 100%;
-                                margin: 0px;
-                                padding: 0px
+            DEBUG: print("update_map called, map_view exists:", hasattr(self, 'map_view') and self.map_view is not None, 
+                      "has setHtml:", hasattr(self, 'map_view') and self.map_view is not None and hasattr(self.map_view, 'setHtml'))
+            
+            if not hasattr(self, 'map_view') or self.map_view is None or not hasattr(self.map_view, 'setHtml'):
+                return
+            
+            if not self.latitudes or not self.longitudes:
+                # No GPS data yet
+                return
+            
+            DEBUG: print(f"GPS data points: {len(self.latitudes)}, Last lat/long: {self.latitudes[-1]}, {self.longitudes[-1]}")
+            
+            # Get the current location (last point)
+            current_lat = self.latitudes[-1]
+            current_lng = self.longitudes[-1]
+            
+            DEBUG: print(f"Updating map with center at {current_lat}, {current_lng}")
+            
+            # Create path string with all points
+            path_points = []
+            for i in range(min(len(self.latitudes), len(self.longitudes))):
+                path_points.append(f"{{lat: {self.latitudes[i]}, lng: {self.longitudes[i]}}}")
+            
+            path_str = ", ".join(path_points)
+            
+            # Generate HTML content with the map
+            html = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <script src="https://maps.googleapis.com/maps/api/js?key="></script>
+                <style>
+                    html, body, #map {{
+                        height: 100%;
+                        width: 100%;
+                        margin: 0;
+                        padding: 0;
+                    }}
+                </style>
+            </head>
+            <body>
+                <div id="map"></div>
+                <script>
+                    function initMap() {{
+                        var map = new google.maps.Map(document.getElementById('map'), {{
+                            zoom: 18,
+                            center: {{lat: {current_lat}, lng: {current_lng}}},
+                            mapTypeId: 'satellite'
+                        }});
+                        
+                        // Create the flight path
+                        var flightPath = new google.maps.Polyline({{
+                            path: [{path_str}],
+                            geodesic: true,
+                            strokeColor: '#FF0000',
+                            strokeOpacity: 1.0,
+                            strokeWeight: 3
+                        }});
+                        
+                        flightPath.setMap(map);
+                        
+                        // Add marker for current position with custom icon
+                        var currentPositionMarker = new google.maps.Marker({{
+                            position: {{lat: {current_lat}, lng: {current_lng}}},
+                            map: map,
+                            title: 'Current Position',
+                            icon: {{
+                                path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
+                                scale: 6,
+                                fillColor: '#00FF00',
+                                fillOpacity: 1,
+                                strokeColor: '#000000',
+                                strokeWeight: 1,
+                                rotation: {self.current_heading if hasattr(self, 'current_heading') and self.current_heading is not None else 0}
                             }}
-                        </style>
-                        <script src="https://maps.googleapis.com/maps/api/js?v=3.exp"></script>
-                        <script>
-                            var map;
-                            function initialize() {{
-                                var mapOptions = {{
-                                    zoom: 15,
-                                    center: new google.maps.LatLng({lat}, {lng}),
-                                    mapTypeId: google.maps.MapTypeId.SATELLITE
-                                }};
-                                map = new google.maps.Map(document.getElementById('map-canvas'), mapOptions);
-                                
-                                // Add flight path
-                                var flightPath = new google.maps.Polyline({{
-                                    path: [
-                                        {path_points}
-                                    ],
-                                    geodesic: true,
-                                    strokeColor: '#FF0000',
-                                    strokeOpacity: 1.0,
-                                    strokeWeight: 2
-                                }});
-                                
-                                flightPath.setMap(map);
-                                
-                                // Add current position marker
+                        }});
+                        
+                        // Add distance markers every 10 points
+                        var distanceMarkers = [];
+                        var points = [{path_str}];
+                        for (var i = 0; i < points.length; i += 10) {{
+                            if (i > 0) {{
                                 var marker = new google.maps.Marker({{
-                                    position: new google.maps.LatLng({lat}, {lng}),
+                                    position: points[i],
                                     map: map,
-                                    title: 'Current Position'
+                                    icon: {{
+                                        path: google.maps.SymbolPath.CIRCLE,
+                                        scale: 3,
+                                        fillColor: '#FFFF00',
+                                        fillOpacity: 0.7,
+                                        strokeColor: '#000000',
+                                        strokeWeight: 1
+                                    }}
                                 }});
+                                distanceMarkers.push(marker);
                             }}
-                            google.maps.event.addDomListener(window, 'load', initialize);
-                        </script>
-                    </head>
-                    <body>
-                        <div id="map-canvas"></div>
-                    </body>
-                    </html>
-                    """
+                        }}
+                    }}
                     
-                    # Update the map
-                    self.map_view.setHtml(html)
+                    google.maps.event.addDomListener(window, 'load', initMap);
+                </script>
+            </body>
+            </html>
+            """
+            
+            # Update the HTML content in the QWebEngineView
+            self.map_view.setHtml(html)
+            DEBUG: print("Map HTML updated")
         except Exception as e:
-            print(f"Error updating map: {e}")
+            DEBUG: print(f"Error updating map: {e}")
     
     def clear_plots(self):
         """Clear all plot data."""
@@ -774,8 +746,7 @@ class MainWindow(QMainWindow):
             "Speed", "Heading", "pDOP", "RTK", "Pressure", "Temperature", 
             "KX134_AccelX", "KX134_AccelY", "KX134_AccelZ", "ICM_AccelX", 
             "ICM_AccelY", "ICM_AccelZ", "ICM_GyroX", "ICM_GyroY", "ICM_GyroZ", 
-            "ICM_MagX", "ICM_MagY", "ICM_MagZ", "ICM_Temp", "ICM_QuatW", 
-            "ICM_QuatX", "ICM_QuatY", "ICM_QuatZ"
+            "ICM_MagX", "ICM_MagY", "ICM_MagZ", "ICM_Temp"
         ]
         
         # Create main widget and layout
@@ -1102,15 +1073,15 @@ class MainWindow(QMainWindow):
     
     def process_received_data(self, data):
         """Process received data and update visualizations"""
-        print(f"MainWindow received signal with data: {data[:100]}...") # Added confirmation print
         try:
+            print(f"DEBUG: process_received_data called with data: {data}")
+            
             # Parse the data line
             values = data.strip().split(',')
-            print(f"Received data values: {values}")  # Debug print
 
             # Skip header lines or lines with incorrect number of columns
             if len(values) != len(self.data_headers) or values[0] == 'Timestamp':
-                print(f"Skipping line: Header or mismatched columns ({len(values)} vs {len(self.data_headers)}). Data: {data}")
+                print(f"DEBUG: Skipping line - header or wrong column count (got {len(values)}, expected {len(self.data_headers)})")
                 return
 
             # Create data dictionary
@@ -1123,15 +1094,17 @@ class MainWindow(QMainWindow):
                     # Handle potential errors during conversion or if fewer values than headers
                     data_dict[self.data_headers[i]] = values[i].strip() if i < len(values) else None # Assign None if value missing
 
-            print(f"Parsed data_dict: {data_dict}") # Added print
-
+            print(f"DEBUG: Parsed data dictionary: {data_dict}")
+            
             # Update data preview
             self.update_data_preview(data_dict)
 
             # Update real-time visualization (always add data, plot widget handles visibility)
             if self.real_time_plot:
-                print("Calling real_time_plot.add_data_point...")  # Confirmation print
+                print("DEBUG: Updating real_time_plot with new data")
                 self.real_time_plot.add_data_point(data_dict)
+            else:
+                print("DEBUG: real_time_plot is None, not updating")
 
             # Update status bar with latest timestamp
             if 'Timestamp' in data_dict:
@@ -1144,7 +1117,6 @@ class MainWindow(QMainWindow):
 
         except Exception as e:
             print(f"Error processing data: {str(e)}")  # Debug print
-            print(f"Data that caused error: {data}")  # Debug print
             traceback.print_exc()  # Print full traceback
     
     def update_data_preview(self, data):

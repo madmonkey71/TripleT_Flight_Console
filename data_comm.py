@@ -53,6 +53,9 @@ class DataCommManager:
         """
         ports = []
         for port in serial.tools.list_ports.comports():
+            # Skip ttyS ports
+            if 'ttyS' in port.device:
+                continue
             ports.append({
                 'device': port.device,
                 'description': port.description,
@@ -220,13 +223,11 @@ class DataCommManager:
                 bytes_available = self.serial_conn.in_waiting
                 if bytes_available > 0:
                     raw_data = self.serial_conn.read(bytes_available)
-                    print(f"_read_serial: Read {len(raw_data)} bytes: {raw_data[:50]}...")
                     
                     # Decode data and handle potential errors
                     try:
                         data = raw_data.decode('utf-8', errors='ignore')
                     except UnicodeDecodeError as decode_error:
-                        print(f"_read_serial: UnicodeDecodeError: {decode_error} - Data: {raw_data}")
                         continue # Skip this chunk if decoding fails
                         
                     # Append to line buffer
@@ -237,7 +238,6 @@ class DataCommManager:
                         line, self.line_buffer = self.line_buffer.split('\n', 1)
                         line = line.strip() # Remove leading/trailing whitespace including \r
                         if line:
-                            print(f"_read_serial: Queuing line: {line}")
                             self.data_queue.put(line)
                 else:
                     # Sleep briefly if no data is available to avoid busy-waiting
@@ -247,12 +247,6 @@ class DataCommManager:
                 self.running = False # Stop the loop on serial error
                 self.close() # Attempt to close the connection
                 break
-            except Exception as e:
-                print(f"Unexpected error in _read_serial: {e}")
-                traceback.print_exc()
-                # Optionally decide whether to continue or break on unexpected errors
-                time.sleep(0.1) # Brief pause before retrying
-        print("_read_serial thread finished.")
     
     def _receive_tcp_data(self) -> None:
         """Thread function for receiving data from TCP connection."""
