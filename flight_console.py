@@ -91,10 +91,32 @@ class RealTimePlotWidget(QWidget):
         self.gyros = np.array([]).reshape(0, 3)
         self.quaternions = np.array([]).reshape(0, 4)
         
+        # New data arrays for additional fields
+        self.altitudes_agl = np.array([])
+        self.max_altitudes = np.array([])
+        self.vert_velocities = np.array([])
+        self.accel_magnitudes = np.array([])
+        self.battery_voltages = np.array([])
+        self.flight_states = np.array([])
+        self.hacc_values = np.array([])
+        self.vacc_values = np.array([])
+        
+        # Newest data arrays for the latest fields
+        self.gps_log_statuses = np.array([])
+        self.cpu_temps = np.array([])
+        self.battery2_voltages = np.array([])
+        
         # For storing current values for text display
         self.current_sats = 0
         self.current_speed = 0
         self.current_heading = 0
+        
+        # New current values
+        self.current_battery = 0
+        self.current_flight_state = "Unknown"
+        self.current_flight_state_code = 0
+        self.current_sdcard_status = "Unknown"
+        self.current_free_space = 0
         
         # For Google Maps
         self.maps_html = None
@@ -111,6 +133,9 @@ class RealTimePlotWidget(QWidget):
         self.altitude_plot.setLabel('bottom', 'Time', units='s')
         self.altitude_curve = self.altitude_plot.plot(pen='y')
         
+        # Add AGL altitude curve to the same plot with a different color
+        self.altitude_agl_curve = self.altitude_plot.plot(pen='g', name='AGL')
+        
         # Separate plots for pressure and temperature
         self.pressure_plot = pg.PlotWidget()
         self.pressure_plot.setTitle("Pressure")
@@ -122,7 +147,27 @@ class RealTimePlotWidget(QWidget):
         self.temperature_plot.setTitle("Temperature")
         self.temperature_plot.setLabel('left', 'Temperature', units='°C')
         self.temperature_plot.setLabel('bottom', 'Time', units='s')
-        self.temperature_curve = self.temperature_plot.plot(pen='r')
+        self.temperature_curve = self.temperature_plot.plot(pen='r', name='Ambient')
+        # Add CPU temperature curve
+        self.cpu_temp_curve = self.temperature_plot.plot(pen=(255, 140, 0), name='CPU')
+        self.temperature_plot.addLegend()
+        
+        # New plot for vertical velocity
+        self.velocity_plot = pg.PlotWidget()
+        self.velocity_plot.setTitle("Vertical Velocity")
+        self.velocity_plot.setLabel('left', 'Velocity', units='m/s')
+        self.velocity_plot.setLabel('bottom', 'Time', units='s')
+        self.vert_velocity_curve = self.velocity_plot.plot(pen='m')
+        
+        # New plot for battery voltage
+        self.battery_plot = pg.PlotWidget()
+        self.battery_plot.setTitle("Battery Voltage")
+        self.battery_plot.setLabel('left', 'Voltage', units='V')
+        self.battery_plot.setLabel('bottom', 'Time', units='s')
+        self.battery_curve = self.battery_plot.plot(pen='y', name='Battery 1')
+        # Add second battery voltage curve
+        self.battery_curve2 = self.battery_plot.plot(pen='g', name='Battery 2')
+        self.battery_plot.addLegend()
         
         # Create plot for accelerometer and gyroscope data
         self.motion_plot = pg.PlotWidget()
@@ -133,6 +178,7 @@ class RealTimePlotWidget(QWidget):
         self.accel_x_curve = self.motion_plot.plot(pen='r', name='Accel X')
         self.accel_y_curve = self.motion_plot.plot(pen='g', name='Accel Y')
         self.accel_z_curve = self.motion_plot.plot(pen='b', name='Accel Z')
+        self.accel_mag_curve = self.motion_plot.plot(pen='w', name='Accel Mag')
         
         # Gyroscope curves
         self.gyro_x_curve = self.motion_plot.plot(pen=(255, 0, 0, 100), name='Gyro X')
@@ -219,8 +265,33 @@ class RealTimePlotWidget(QWidget):
         middle_row.addWidget(self.temperature_plot)
         layout.addLayout(middle_row)
         
+        # Add a new row for vertical velocity and battery
+        new_row = QHBoxLayout()
+        new_row.addWidget(self.velocity_plot)
+        new_row.addWidget(self.battery_plot)
+        layout.addLayout(new_row)
+        
         # Bottom row with accelerometer and gyroscope data
         layout.addWidget(self.motion_plot)
+        
+        # Status information panel
+        status_panel = QGroupBox("Flight Status")
+        status_layout = QGridLayout(status_panel)
+        
+        # Create status labels
+        self.flight_state_label = QLabel("Flight State: Unknown")
+        self.battery_voltage_label = QLabel("Battery: 0.0V")
+        self.sd_status_label = QLabel("SD Card: Unknown")
+        self.gps_accuracy_label = QLabel("GPS Accuracy: H:0.0m V:0.0m")
+        
+        # Add labels to status panel
+        status_layout.addWidget(self.flight_state_label, 0, 0)
+        status_layout.addWidget(self.battery_voltage_label, 0, 1)
+        status_layout.addWidget(self.sd_status_label, 1, 0)
+        status_layout.addWidget(self.gps_accuracy_label, 1, 1)
+        
+        # Add status panel to layout
+        layout.addWidget(status_panel)
         
         # Set margins and spacing
         layout.setContentsMargins(10, 10, 10, 10)
@@ -270,6 +341,10 @@ class RealTimePlotWidget(QWidget):
             if len(self.altitudes) > 0:
                 self.altitude_curve.setData(self.timestamps, self.altitudes)
             
+            # Update AGL altitude curve
+            if len(self.altitudes_agl) > 0:
+                self.altitude_agl_curve.setData(self.timestamps, self.altitudes_agl)
+            
             # Update pressure plot
             if len(self.pressures) > 0:
                 self.pressure_curve.setData(self.timestamps, self.pressures)
@@ -278,11 +353,27 @@ class RealTimePlotWidget(QWidget):
             if len(self.temperatures) > 0:
                 self.temperature_curve.setData(self.timestamps, self.temperatures)
             
+            # Update vertical velocity plot
+            if len(self.vert_velocities) > 0:
+                self.vert_velocity_curve.setData(self.timestamps, self.vert_velocities)
+                
+            # Update battery voltage plot - now include both voltage readings if available
+            if len(self.battery_voltages) > 0:
+                self.battery_curve.setData(self.timestamps, self.battery_voltages)
+                
+                # Add battery voltage 2 curve if we have the data and it's not just zeros
+                if hasattr(self, 'battery2_voltages') and len(self.battery2_voltages) > 0 and np.any(self.battery2_voltages):
+                    self.battery_curve2.setData(self.timestamps, self.battery2_voltages)
+            
             # Update motion sensors plot
             if len(self.accelerations) > 0:
                 self.accel_x_curve.setData(self.timestamps, self.accelerations[:, 0])
                 self.accel_y_curve.setData(self.timestamps, self.accelerations[:, 1])
                 self.accel_z_curve.setData(self.timestamps, self.accelerations[:, 2])
+            
+            # Update acceleration magnitude
+            if len(self.accel_magnitudes) > 0:
+                self.accel_mag_curve.setData(self.timestamps, self.accel_magnitudes)
             
             if len(self.gyros) > 0:
                 self.gyro_x_curve.setData(self.timestamps, self.gyros[:, 0])
@@ -313,12 +404,18 @@ class RealTimePlotWidget(QWidget):
                 self.orientation_y.setTransform(transform)
                 self.orientation_z.setTransform(transform)
             
+            # Update CPU temperature - add to temperature plot if we have data
+            if hasattr(self, 'cpu_temps') and len(self.cpu_temps) > 0 and np.any(self.cpu_temps):
+                self.cpu_temp_curve.setData(self.timestamps, self.cpu_temps)
+            
             # Force update of all plot widgets
             self.altitude_plot.update()
             self.pressure_plot.update()
             self.temperature_plot.update()
             self.motion_plot.update()
             self.attitude_view.update()
+            self.velocity_plot.update()
+            self.battery_plot.update()
             
             # Process Qt events to keep UI responsive
             self.app.processEvents()
@@ -346,8 +443,8 @@ class RealTimePlotWidget(QWidget):
                 self.timestamps = np.append(self.timestamps, next_timestamp)
             
             # Extract altitude
-            if 'Alt' in data_point and data_point['Alt'] is not None:
-                alt_val = float(data_point['Alt'])
+            if 'GPS_altitude' in data_point and data_point['GPS_altitude'] is not None:
+                alt_val = float(data_point['GPS_altitude'])
                 self.altitudes = np.append(self.altitudes, alt_val)
             elif len(self.altitudes) > 0:
                 # If no new data, repeat last value
@@ -356,25 +453,25 @@ class RealTimePlotWidget(QWidget):
                 self.altitudes = np.append(self.altitudes, 0)
             
             # Extract pressure
-            if 'Pressure' in data_point and data_point['Pressure'] is not None:
-                self.pressures = np.append(self.pressures, float(data_point['Pressure']))
+            if 'pressure' in data_point and data_point['pressure'] is not None:
+                self.pressures = np.append(self.pressures, float(data_point['pressure']))
             elif len(self.pressures) > 0:
                 self.pressures = np.append(self.pressures, self.pressures[-1])
             else:
                 self.pressures = np.append(self.pressures, 0)
             
             # Extract temperature
-            if 'Temperature' in data_point and data_point['Temperature'] is not None:
-                self.temperatures = np.append(self.temperatures, float(data_point['Temperature']))
+            if 'temperature' in data_point and data_point['temperature'] is not None:
+                self.temperatures = np.append(self.temperatures, float(data_point['temperature']))
             elif len(self.temperatures) > 0:
                 self.temperatures = np.append(self.temperatures, self.temperatures[-1])
             else:
                 self.temperatures = np.append(self.temperatures, 0)
             
             # Extract GPS
-            if 'Lat' in data_point and 'Long' in data_point and data_point['Lat'] is not None and data_point['Long'] is not None:
-                self.latitudes = np.append(self.latitudes, float(data_point['Lat']))
-                self.longitudes = np.append(self.longitudes, float(data_point['Long']))
+            if 'Latitude' in data_point and 'Longitude' in data_point and data_point['Latitude'] is not None and data_point['Longitude'] is not None:
+                self.latitudes = np.append(self.latitudes, float(data_point['Latitude']))
+                self.longitudes = np.append(self.longitudes, float(data_point['Longitude']))
             elif len(self.latitudes) > 0 and len(self.longitudes) > 0:
                 self.latitudes = np.append(self.latitudes, self.latitudes[-1])
                 self.longitudes = np.append(self.longitudes, self.longitudes[-1])
@@ -384,11 +481,11 @@ class RealTimePlotWidget(QWidget):
             
             # Extract acceleration
             new_accel = np.zeros(3)
-            if 'ICM_AccelX' in data_point and 'ICM_AccelY' in data_point and 'ICM_AccelZ' in data_point and \
-               data_point['ICM_AccelX'] is not None and data_point['ICM_AccelY'] is not None and data_point['ICM_AccelZ'] is not None:
-                new_accel[0] = float(data_point['ICM_AccelX'])
-                new_accel[1] = float(data_point['ICM_AccelY'])
-                new_accel[2] = float(data_point['ICM_AccelZ'])
+            if 'icm_accel_x' in data_point and 'icm_accel_y' in data_point and 'icm_accel_z' in data_point and \
+               data_point['icm_accel_x'] is not None and data_point['icm_accel_y'] is not None and data_point['icm_accel_z'] is not None:
+                new_accel[0] = float(data_point['icm_accel_x'])
+                new_accel[1] = float(data_point['icm_accel_y'])
+                new_accel[2] = float(data_point['icm_accel_z'])
             elif len(self.accelerations) > 0:
                 new_accel = self.accelerations[-1]
             
@@ -396,25 +493,19 @@ class RealTimePlotWidget(QWidget):
             
             # Extract gyro
             new_gyro = np.zeros(3)
-            if 'ICM_GyroX' in data_point and 'ICM_GyroY' in data_point and 'ICM_GyroZ' in data_point and \
-               data_point['ICM_GyroX'] is not None and data_point['ICM_GyroY'] is not None and data_point['ICM_GyroZ'] is not None:
-                new_gyro[0] = float(data_point['ICM_GyroX'])
-                new_gyro[1] = float(data_point['ICM_GyroY'])
-                new_gyro[2] = float(data_point['ICM_GyroZ'])
+            if 'icm_gyro_x' in data_point and 'icm_gyro_y' in data_point and 'icm_gyro_z' in data_point and \
+               data_point['icm_gyro_x'] is not None and data_point['icm_gyro_y'] is not None and data_point['icm_gyro_z'] is not None:
+                new_gyro[0] = float(data_point['icm_gyro_x'])
+                new_gyro[1] = float(data_point['icm_gyro_y'])
+                new_gyro[2] = float(data_point['icm_gyro_z'])
             elif len(self.gyros) > 0:
                 new_gyro = self.gyros[-1]
             
             self.gyros = np.vstack([self.gyros, new_gyro]) if len(self.gyros) > 0 else np.array([new_gyro])
             
-            # Extract quaternion
+            # Extract quaternion from UKF data if available
             new_quat = np.zeros(4)
-            if 'ICM_QuatW' in data_point and 'ICM_QuatX' in data_point and 'ICM_QuatY' in data_point and 'ICM_QuatZ' in data_point and \
-               data_point['ICM_QuatW'] is not None and data_point['ICM_QuatX'] is not None and data_point['ICM_QuatY'] is not None and data_point['ICM_QuatZ'] is not None:
-                new_quat[0] = float(data_point['ICM_QuatW'])
-                new_quat[1] = float(data_point['ICM_QuatX'])
-                new_quat[2] = float(data_point['ICM_QuatY'])
-                new_quat[3] = float(data_point['ICM_QuatZ'])
-            elif len(self.quaternions) > 0:
+            if len(self.quaternions) > 0:
                 new_quat = self.quaternions[-1]
             else:
                 # Default orientation if no quaternion data is available
@@ -425,14 +516,108 @@ class RealTimePlotWidget(QWidget):
             self.quaternions = np.vstack([self.quaternions, new_quat]) if len(self.quaternions) > 0 else np.array([new_quat])
             
             # Update text display data
-            if 'Sats' in data_point and data_point['Sats'] is not None:
-                self.current_sats = int(float(data_point['Sats']))
+            if 'SIV' in data_point and data_point['SIV'] is not None:
+                self.current_sats = int(float(data_point['SIV']))
             
-            if 'Speed' in data_point and data_point['Speed'] is not None:
-                self.current_speed = float(data_point['Speed'])
+            if 'GPS_speed' in data_point and data_point['GPS_speed'] is not None:
+                self.current_speed = float(data_point['GPS_speed'])
             
-            if 'Heading' in data_point and data_point['Heading'] is not None:
-                self.current_heading = float(data_point['Heading'])
+            if 'GPS_heading' in data_point and data_point['GPS_heading'] is not None:
+                self.current_heading = float(data_point['GPS_heading'])
+            
+            # Extract AGL altitude
+            if 'baroAltDiff' in data_point and data_point['baroAltDiff'] is not None:
+                self.altitudes_agl = np.append(self.altitudes_agl, float(data_point['baroAltDiff']))
+            elif len(self.altitudes_agl) > 0:
+                self.altitudes_agl = np.append(self.altitudes_agl, self.altitudes_agl[-1])
+            else:
+                self.altitudes_agl = np.append(self.altitudes_agl, 0)
+            
+            # Extract max altitude
+            if 'maxAltitudeReached' in data_point and data_point['maxAltitudeReached'] is not None:
+                self.max_altitudes = np.append(self.max_altitudes, float(data_point['maxAltitudeReached']))
+            elif len(self.max_altitudes) > 0:
+                self.max_altitudes = np.append(self.max_altitudes, self.max_altitudes[-1])
+            else:
+                self.max_altitudes = np.append(self.max_altitudes, 0)
+            
+            # Extract vertical velocity
+            if 'verticalVelocity' in data_point and data_point['verticalVelocity'] is not None:
+                self.vert_velocities = np.append(self.vert_velocities, float(data_point['verticalVelocity']))
+            elif len(self.vert_velocities) > 0:
+                self.vert_velocities = np.append(self.vert_velocities, self.vert_velocities[-1])
+            else:
+                self.vert_velocities = np.append(self.vert_velocities, 0)
+            
+            # Extract acceleration magnitude
+            if 'accelMagnitude' in data_point and data_point['accelMagnitude'] is not None:
+                self.accel_magnitudes = np.append(self.accel_magnitudes, float(data_point['accelMagnitude']))
+            elif len(self.accel_magnitudes) > 0:
+                self.accel_magnitudes = np.append(self.accel_magnitudes, self.accel_magnitudes[-1])
+            else:
+                self.accel_magnitudes = np.append(self.accel_magnitudes, 0)
+            
+            # Extract battery voltage
+            if 'batteryVoltage' in data_point and data_point['batteryVoltage'] is not None:
+                battery_val = float(data_point['batteryVoltage'])
+                self.battery_voltages = np.append(self.battery_voltages, battery_val)
+                self.current_battery = battery_val
+                self.battery_voltage_label.setText(f"Battery: {battery_val:.2f}V")
+            elif len(self.battery_voltages) > 0:
+                self.battery_voltages = np.append(self.battery_voltages, self.battery_voltages[-1])
+            else:
+                self.battery_voltages = np.append(self.battery_voltages, 0)
+            
+            # Extract flight state
+            if 'flightState' in data_point and data_point['flightState'] is not None:
+                state_code = int(float(data_point['flightState']))
+                self.flight_states = np.append(self.flight_states, state_code)
+                self.current_flight_state_code = state_code
+            elif len(self.flight_states) > 0:
+                self.flight_states = np.append(self.flight_states, self.flight_states[-1])
+            else:
+                self.flight_states = np.append(self.flight_states, 0)
+            
+            # Extract flight state name and update label
+            if 'flightStateName' in data_point and data_point['flightStateName'] is not None:
+                state_name = data_point['flightStateName']
+                self.current_flight_state = state_name
+                self.flight_state_label.setText(f"Flight State: {state_name}")
+            
+            # Extract SD card status
+            if 'sdCardAvailable' in data_point and data_point['sdCardAvailable'] is not None:
+                sd_status = data_point['sdCardAvailable']
+                self.current_sdcard_status = sd_status
+                
+                # Extract free space if available
+                if 'availableSpace_MB' in data_point and data_point['availableSpace_MB'] is not None:
+                    free_space = float(data_point['availableSpace_MB'])
+                    self.current_free_space = free_space
+                    self.sd_status_label.setText(f"SD Card: {sd_status} ({free_space:.1f}MB free)")
+                else:
+                    self.sd_status_label.setText(f"SD Card: {sd_status}")
+            
+            # Extract GPS accuracy
+            if 'gpsHorizontalAccuracy' in data_point and 'gpsVerticalAccuracy' in data_point and data_point['gpsHorizontalAccuracy'] is not None and data_point['gpsVerticalAccuracy'] is not None:
+                hacc = float(data_point['gpsHorizontalAccuracy'])
+                vacc = float(data_point['gpsVerticalAccuracy'])
+                self.hacc_values = np.append(self.hacc_values, hacc)
+                self.vacc_values = np.append(self.vacc_values, vacc)
+                self.gps_accuracy_label.setText(f"GPS Accuracy: H:{hacc:.1f}m V:{vacc:.1f}m")
+            elif len(self.hacc_values) > 0 and len(self.vacc_values) > 0:
+                self.hacc_values = np.append(self.hacc_values, self.hacc_values[-1])
+                self.vacc_values = np.append(self.vacc_values, self.vacc_values[-1])
+                # Keep previous label values
+            else:
+                self.hacc_values = np.append(self.hacc_values, 0)
+                self.vacc_values = np.append(self.vacc_values, 0)
+                self.gps_accuracy_label.setText("GPS Accuracy: N/A")
+            
+            # Extract GPS log status - not in new format, so we'll skip this
+            
+            # Extract CPU temperature - not in new format, so we'll skip this
+            
+            # Extract second battery voltage - not in new format, so we'll skip this
             
             # Limit data arrays to max_points
             if len(self.timestamps) > self.max_points:
@@ -445,6 +630,21 @@ class RealTimePlotWidget(QWidget):
                 self.accelerations = self.accelerations[-self.max_points:]
                 self.gyros = self.gyros[-self.max_points:]
                 self.quaternions = self.quaternions[-self.max_points:]
+                
+                # Limit new arrays as well
+                self.altitudes_agl = self.altitudes_agl[-self.max_points:]
+                self.max_altitudes = self.max_altitudes[-self.max_points:]
+                self.vert_velocities = self.vert_velocities[-self.max_points:]
+                self.accel_magnitudes = self.accel_magnitudes[-self.max_points:]
+                self.battery_voltages = self.battery_voltages[-self.max_points:]
+                self.flight_states = self.flight_states[-self.max_points:]
+                self.hacc_values = self.hacc_values[-self.max_points:]
+                self.vacc_values = self.vacc_values[-self.max_points:]
+                
+                # Limit newest arrays as well
+                self.gps_log_statuses = self.gps_log_statuses[-self.max_points:]
+                self.cpu_temps = self.cpu_temps[-self.max_points:]
+                self.battery2_voltages = self.battery2_voltages[-self.max_points:]
             
             # Update Google Maps if we have GPS data
             if len(self.latitudes) > 0 and len(self.longitudes) > 0:
@@ -460,7 +660,7 @@ class RealTimePlotWidget(QWidget):
     def update_map(self):
         """Update the Google Maps view with current GPS data."""
         try:
-            DEBUG: print("update_map called, map_view exists:", hasattr(self, 'map_view') and self.map_view is not None, 
+            print("DEBUG: update_map called, map_view exists:", hasattr(self, 'map_view') and self.map_view is not None, 
                       "has setHtml:", hasattr(self, 'map_view') and self.map_view is not None and hasattr(self.map_view, 'setHtml'))
             
             if not hasattr(self, 'map_view') or self.map_view is None or not hasattr(self.map_view, 'setHtml'):
@@ -470,13 +670,13 @@ class RealTimePlotWidget(QWidget):
                 # No GPS data yet
                 return
             
-            DEBUG: print(f"GPS data points: {len(self.latitudes)}, Last lat/long: {self.latitudes[-1]}, {self.longitudes[-1]}")
+            print(f"GPS data points: {len(self.latitudes)}, Last lat/long: {self.latitudes[-1]}, {self.longitudes[-1]}")
             
             # Get the current location (last point)
             current_lat = self.latitudes[-1]
             current_lng = self.longitudes[-1]
             
-            DEBUG: print(f"Updating map with center at {current_lat}, {current_lng}")
+            print(f"Updating map with center at {current_lat}, {current_lng}")
             
             # Create path string with all points
             path_points = []
@@ -567,9 +767,9 @@ class RealTimePlotWidget(QWidget):
             
             # Update the HTML content in the QWebEngineView
             self.map_view.setHtml(html)
-            DEBUG: print("Map HTML updated")
+            print("DEBUG: Map HTML updated")
         except Exception as e:
-            DEBUG: print(f"Error updating map: {e}")
+            print(f"DEBUG: Error updating map: {e}")
     
     def clear_plots(self):
         """Clear all plot data."""
@@ -584,6 +784,32 @@ class RealTimePlotWidget(QWidget):
             self.accelerations = np.array([]).reshape(0, 3)
             self.gyros = np.array([]).reshape(0, 3)
             self.quaternions = np.array([]).reshape(0, 4)
+            
+            # Reset new data arrays
+            self.altitudes_agl = np.array([])
+            self.max_altitudes = np.array([])
+            self.vert_velocities = np.array([])
+            self.accel_magnitudes = np.array([])
+            self.battery_voltages = np.array([])
+            self.flight_states = np.array([])
+            self.hacc_values = np.array([])
+            self.vacc_values = np.array([])
+            
+            # Reset current values
+            self.current_sats = 0
+            self.current_speed = 0
+            self.current_heading = 0
+            self.current_battery = 0
+            self.current_flight_state = "Unknown"
+            self.current_flight_state_code = 0
+            self.current_sdcard_status = "Unknown"
+            self.current_free_space = 0
+            
+            # Reset labels
+            self.flight_state_label.setText("Flight State: Unknown")
+            self.battery_voltage_label.setText("Battery: 0.0V")
+            self.sd_status_label.setText("SD Card: Unknown")
+            self.gps_accuracy_label.setText("GPS Accuracy: H:0.0m V:0.0m")
             
             # Clear plot curves
             self.update_plots()
@@ -621,7 +847,13 @@ class StaticPlotWidget(QWidget):
             "ICM Accelerometer",
             "ICM Gyroscope",
             "ICM Magnetometer",
-            "Environmental"
+            "Environmental",
+            "Flight State",
+            "Battery & System",
+            "Altitude (AGL vs MSL)",
+            "Velocity",
+            "GPS Accuracy",
+            "UKF Data"
         ])
         
         self.plot_button = QPushButton("Create Plot")
@@ -657,18 +889,30 @@ class StaticPlotWidget(QWidget):
         """Get the columns selected for plotting."""
         selection = self.column_select_combo.currentText()
         
-        if "GPS" in selection:
-            return ["Alt", "Speed", "Heading"]
+        if "GPS" in selection and "Accuracy" not in selection:
+            return ["GPS_altitude", "GPS_speed", "GPS_heading"]
         elif "KX134 Accelerometer" in selection:
-            return ["KX134_AccelX", "KX134_AccelY", "KX134_AccelZ"]
+            return ["kx134_accel_x", "kx134_accel_y", "kx134_accel_z"]
         elif "ICM Accelerometer" in selection:
-            return ["ICM_AccelX", "ICM_AccelY", "ICM_AccelZ"]
+            return ["icm_accel_x", "icm_accel_y", "icm_accel_z"]
         elif "ICM Gyroscope" in selection:
-            return ["ICM_GyroX", "ICM_GyroY", "ICM_GyroZ"]
+            return ["icm_gyro_x", "icm_gyro_y", "icm_gyro_z"]
         elif "ICM Magnetometer" in selection:
-            return ["ICM_MagX", "ICM_MagY", "ICM_MagZ"]
+            return ["icm_mag_x", "icm_mag_y", "icm_mag_z"]
         elif "Environmental" in selection:
-            return ["Pressure", "Temperature"]
+            return ["pressure", "temperature"]
+        elif "Flight State" in selection:
+            return ["flightState", "flightStateName", "lastStateChangeTime", "timeSinceStateChange"]
+        elif "Battery & System" in selection:
+            return ["batteryVoltage", "sdCardAvailable", "availableSpace_MB", "sensorFlags"]
+        elif "Altitude (AGL vs MSL)" in selection:
+            return ["GPS_altitude", "GPS_altitudeMSL", "baroAltDiff", "maxAltitudeReached"]
+        elif "Velocity" in selection:
+            return ["GPS_speed", "verticalVelocity"]
+        elif "GPS Accuracy" in selection:
+            return ["pDOP", "SIV", "gpsHorizontalAccuracy", "gpsVerticalAccuracy"]
+        elif "UKF Data" in selection:
+            return ["ukfPosition", "ukfVelocity", "ukfAcceleration"]
         
         return []
     
@@ -688,15 +932,24 @@ class StaticPlotWidget(QWidget):
             self.visualizer.create_time_series_plot(self.data, columns, ax=self.figure.add_subplot(111))
             
         elif plot_type == "GPS Trajectory":
-            self.visualizer.create_gps_trajectory_plot(self.data, ax=self.figure.add_subplot(111))
+            # Adjust to use the new field names
+            if 'Latitude' in self.data.columns and 'Longitude' in self.data.columns:
+                ax = self.figure.add_subplot(111)
+                ax.plot(self.data['Longitude'], self.data['Latitude'], 'b-')
+                ax.set_xlabel('Longitude')
+                ax.set_ylabel('Latitude')
+                ax.set_title('GPS Trajectory')
+                ax.grid(True)
+            else:
+                QMessageBox.warning(self, "Missing Data", "GPS data is incomplete")
             
         elif plot_type == "3D Trajectory":
-            if any(col not in self.data.columns for col in ['Lat', 'Long', 'Alt']):
+            if any(col not in self.data.columns for col in ['Latitude', 'Longitude', 'GPS_altitude']):
                 QMessageBox.warning(self, "Missing Data", "GPS data is incomplete")
                 return
             
             ax = self.figure.add_subplot(111, projection='3d')
-            ax.plot(self.data['Long'], self.data['Lat'], self.data['Alt'], 'b-')
+            ax.plot(self.data['Longitude'], self.data['Latitude'], self.data['GPS_altitude'], 'b-')
             ax.set_xlabel('Longitude')
             ax.set_ylabel('Latitude')
             ax.set_zlabel('Altitude (m)')
@@ -704,8 +957,8 @@ class StaticPlotWidget(QWidget):
         
         elif plot_type == "Sensor Comparison":
             sensor_groups = {
-                "KX134": ["KX134_AccelX", "KX134_AccelY", "KX134_AccelZ"],
-                "ICM": ["ICM_AccelX", "ICM_AccelY", "ICM_AccelZ"]
+                "KX134": ["kx134_accel_x", "kx134_accel_y", "kx134_accel_z"],
+                "ICM": ["icm_accel_x", "icm_accel_y", "icm_accel_z"]
             }
             
             # Create subplots for each sensor group
@@ -742,11 +995,19 @@ class MainWindow(QMainWindow):
         
         # Initialize data headers
         self.data_headers = [
-            "Timestamp", "FixType", "Sats", "Lat", "Long", "Alt", "AltMSL", 
-            "Speed", "Heading", "pDOP", "RTK", "Pressure", "Temperature", 
-            "KX134_AccelX", "KX134_AccelY", "KX134_AccelZ", "ICM_AccelX", 
-            "ICM_AccelY", "ICM_AccelZ", "ICM_GyroX", "ICM_GyroY", "ICM_GyroZ", 
-            "ICM_MagX", "ICM_MagY", "ICM_MagZ", "ICM_Temp"
+            "Timestamp", "GPS_fixType", "SIV", "Latitude", "Longitude", 
+            "GPS_altitude", "GPS_altitudeMSL", "GPS_speed", "GPS_heading", 
+            "pDOP", "RTK", "gpsDate", "gpsTime", "pressure", "temperature", 
+            "kx134_accel_x", "kx134_accel_y", "kx134_accel_z", 
+            "icm_accel_x", "icm_accel_y", "icm_accel_z", 
+            "icm_gyro_x", "icm_gyro_y", "icm_gyro_z", 
+            "icm_mag_x", "icm_mag_y", "icm_mag_z", "icm_temp",
+            "ukfPosition", "ukfVelocity", "ukfAcceleration",
+            "flightState", "flightStateName", "lastStateChangeTime", "timeSinceStateChange", 
+            "baroAltDiff", "maxAltitudeReached", "accelMagnitude", "verticalVelocity", 
+            "timeSinceFlightStart", "timeSinceApogee", "sensorFlags", "batteryVoltage",
+            "loopCount", "logSequence", "sdCardAvailable", "availableSpace_MB",
+            "gpsHorizontalAccuracy", "gpsVerticalAccuracy"
         ]
         
         # Create main widget and layout
@@ -1079,10 +1340,14 @@ class MainWindow(QMainWindow):
             # Parse the data line
             values = data.strip().split(',')
 
-            # Skip header lines or lines with incorrect number of columns
-            if len(values) != len(self.data_headers) or values[0] == 'Timestamp':
-                print(f"DEBUG: Skipping line - header or wrong column count (got {len(values)}, expected {len(self.data_headers)})")
+            # Skip header lines or if we don't have enough data
+            if len(values) < len(self.data_headers) or values[0].strip() == 'Timestamp':
+                print(f"DEBUG: Skipping line - header or insufficient data (got {len(values)}, need at least {len(self.data_headers)})")
                 return
+            
+            # If we have more values than headers, log a warning but continue
+            if len(values) > len(self.data_headers):
+                print(f"WARNING: More data values ({len(values)}) than headers ({len(self.data_headers)}). Extra values will be ignored.")
 
             # Create data dictionary
             data_dict = {}
@@ -1133,7 +1398,7 @@ class MainWindow(QMainWindow):
             # Add basic statistics
             try:
                 stats = self.parser.get_data_statistics()
-                for col in ["Alt", "Speed", "Temperature"]:
+                for col in ["GPS_altitude", "GPS_speed", "temperature"]:
                     if col in stats:
                         preview_text += f"{col}: Min={stats[col]['min']:.2f}, Max={stats[col]['max']:.2f}, Mean={stats[col]['mean']:.2f}\n"
             except:
