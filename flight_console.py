@@ -281,19 +281,18 @@ class MainWindow(QMainWindow):
         # The self.data_headers list is no longer the primary source of truth for parsing.
         # It's removed to avoid confusion. The mapping file is now the authority.
         
-        # Create main widget and layout
-        self.central_widget = QWidget()
-        self.setCentralWidget(self.central_widget)
-        self.main_layout = QVBoxLayout(self.central_widget)
-        
-        # Create tabs
+        # Create QTabWidget first, as it will be the central widget.
         self.tabs = QTabWidget()
-        self.main_layout.addWidget(self.tabs)
         
-        # Create tab contents
+        # Create tab contents. These methods will add pages to self.tabs.
+        # create_realtime_tab also adds QDockWidgets to self (the QMainWindow).
         self.create_data_tab()
         self.create_realtime_tab()
         self.create_analysis_tab()
+
+        # Set the QTabWidget as the central widget.
+        # QDockWidgets added in create_realtime_tab will arrange around this.
+        self.setCentralWidget(self.tabs)
         
         # Add status bar
         self.status_bar = self.statusBar()
