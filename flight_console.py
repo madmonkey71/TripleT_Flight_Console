@@ -13,7 +13,7 @@ import traceback
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                             QTabWidget, QPushButton, QLabel, QComboBox, QLineEdit, 
                             QFileDialog, QGroupBox, QGridLayout, QCheckBox, QSplitter,
-                            QMessageBox, QSpinBox, QStatusBar, QAction, QMenu, QToolBar)
+                            QMessageBox, QSpinBox, QStatusBar, QAction, QMenu, QToolBar, QDockWidget)
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, pyqtSlot, QThread, QUrl
 from PyQt5.QtGui import QIcon, QFont
 from typing import Dict, List, Optional, Union, Iterator, Any, Tuple
