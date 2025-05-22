@@ -16,6 +16,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                             QMessageBox, QSpinBox, QStatusBar, QAction, QMenu, QToolBar)
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, pyqtSlot, QThread, QUrl
 from PyQt5.QtGui import QIcon, QFont
+from typing import Dict, List, Optional, Union, Iterator, Any, Tuple
 # Import WebEngine for Google Maps integration
 try:
     from PyQt5.QtWebEngineWidgets import QWebEngineView
