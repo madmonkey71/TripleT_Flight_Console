@@ -1,0 +1,4 @@
+TimeMillis,Temp,DeviceLatitude,DeviceLongitude,BaroAltitude
+1000,30.5,40.7128,-74.0060,150
+2000,30.6,40.7129,-74.0061,152
+3000,30.7,40.7130,-74.0062,154

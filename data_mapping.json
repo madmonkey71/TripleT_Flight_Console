@@ -1,0 +1,38 @@
+{
+  "description": "Default mapping for standard flight data CSV. Maps internal application field names to expected CSV headers or column indices.",
+  "column_mappings": [
+    { "internal_name": "seqNum", "csv_header": "seqNum", "csv_index": null, "default_value": null, "type": "int" },
+    { "internal_name": "Timestamp", "csv_header": "Timestamp", "csv_index": null, "default_value": null, "type": "int" },
+    { "internal_name": "FixType", "csv_header": "FixType", "csv_index": null, "default_value": 0, "type": "int" },
+    { "internal_name": "Sats", "csv_header": "Sats", "csv_index": null, "default_value": 0, "type": "int" },
+    { "internal_name": "Latitude", "csv_header": "Latitude", "csv_index": null, "default_value": 0.0, "type": "float" },
+    { "internal_name": "Longitude", "csv_header": "Longitude", "csv_index": null, "default_value": 0.0, "type": "float" },
+    { "internal_name": "Altitude", "csv_header": "Altitude", "csv_index": null, "default_value": 0.0, "type": "float" },
+    { "internal_name": "AltitudeMSL", "csv_header": "AltitudeMSL", "csv_index": null, "default_value": 0.0, "type": "float" },
+    { "internal_name": "raw_altitude", "csv_header": "raw_altitude", "csv_index": null, "default_value": 0.0, "type": "float" },
+    { "internal_name": "calibrated_altitude", "csv_header": "calibrated_altitude", "csv_index": null, "default_value": 0.0, "type": "float" },
+    { "internal_name": "Speed", "csv_header": "Speed", "csv_index": null, "default_value": 0.0, "type": "float" },
+    { "internal_name": "Heading", "csv_header": "Heading", "csv_index": null, "default_value": 0.0, "type": "float" },
+    { "internal_name": "pDOP", "csv_header": "pDOP", "csv_index": null, "default_value": 9999, "type": "float" },
+    { "internal_name": "RTK", "csv_header": "RTK", "csv_index": null, "default_value": 0, "type": "int" },
+    { "internal_name": "Pressure", "csv_header": "Pressure", "csv_index": null, "default_value": 0.0, "type": "float" },
+    { "internal_name": "Temperature", "csv_header": "Temperature", "csv_index": null, "default_value": 0.0, "type": "float" },
+    { "internal_name": "KX134_AccelX", "csv_header": "KX134_AccelX", "csv_index": null, "default_value": 0.0, "type": "float" },
+    { "internal_name": "KX134_AccelY", "csv_header": "KX134_AccelY", "csv_index": null, "default_value": 0.0, "type": "float" },
+    { "internal_name": "KX134_AccelZ", "csv_header": "KX134_AccelZ", "csv_index": null, "default_value": 0.0, "type": "float" },
+    { "internal_name": "ICM_AccelX", "csv_header": "ICM_AccelX", "csv_index": null, "default_value": 0.0, "type": "float" },
+    { "internal_name": "ICM_AccelY", "csv_header": "ICM_AccelY", "csv_index": null, "default_value": 0.0, "type": "float" },
+    { "internal_name": "ICM_AccelZ", "csv_header": "ICM_AccelZ", "csv_index": null, "default_value": 0.0, "type": "float" },
+    { "internal_name": "ICM_GyroX", "csv_header": "ICM_GyroX", "csv_index": null, "default_value": 0.0, "type": "float" },
+    { "internal_name": "ICM_GyroY", "csv_header": "ICM_GyroY", "csv_index": null, "default_value": 0.0, "type": "float" },
+    { "internal_name": "ICM_GyroZ", "csv_header": "ICM_GyroZ", "csv_index": null, "default_value": 0.0, "type": "float" },
+    { "internal_name": "ICM_MagX", "csv_header": "ICM_MagX", "csv_index": null, "default_value": 0.0, "type": "float" },
+    { "internal_name": "ICM_MagY", "csv_header": "ICM_MagY", "csv_index": null, "default_value": 0.0, "type": "float" },
+    { "internal_name": "ICM_MagZ", "csv_header": "ICM_MagZ", "csv_index": null, "default_value": 0.0, "type": "float" },
+    { "internal_name": "ICM_Temp", "csv_header": "ICM_Temp", "csv_index": null, "default_value": 0.0, "type": "float" }
+  ],
+  "csv_settings": {
+    "delimiter": ",",
+    "has_header": true
+  }
+}
