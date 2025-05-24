@@ -1,3 +1,9 @@
+"""
+DEPRECATION NOTICE: This script (flight_visualizer.py) is deprecated.
+Its 3D attitude visualization functionality has been integrated into 
+the main application (flight_console.py). 
+Please use flight_console.py for all visualizations.
+"""
 #!/usr/bin/env python3
 """
 Flight Data Visualizer

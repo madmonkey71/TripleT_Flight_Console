@@ -29,7 +29,11 @@
     { "internal_name": "ICM_MagX", "csv_header": "ICM_MagX", "csv_index": null, "default_value": 0.0, "type": "float" },
     { "internal_name": "ICM_MagY", "csv_header": "ICM_MagY", "csv_index": null, "default_value": 0.0, "type": "float" },
     { "internal_name": "ICM_MagZ", "csv_header": "ICM_MagZ", "csv_index": null, "default_value": 0.0, "type": "float" },
-    { "internal_name": "ICM_Temp", "csv_header": "ICM_Temp", "csv_index": null, "default_value": 0.0, "type": "float" }
+    { "internal_name": "ICM_Temp", "csv_header": "ICM_Temp", "csv_index": null, "default_value": 0.0, "type": "float" },
+    { "internal_name": "Q0", "csv_header": "Q0", "csv_index": null, "default_value": 1.0, "type": "float" },
+    { "internal_name": "Q1", "csv_header": "Q1", "csv_index": null, "default_value": 0.0, "type": "float" },
+    { "internal_name": "Q2", "csv_header": "Q2", "csv_index": null, "default_value": 0.0, "type": "float" },
+    { "internal_name": "Q3", "csv_header": "Q3", "csv_index": null, "default_value": 0.0, "type": "float" }
   ],
   "csv_settings": {
     "delimiter": ",",

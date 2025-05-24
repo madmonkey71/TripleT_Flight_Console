@@ -28,7 +28,8 @@ class FlightDataParser:
         'icm_accel': ['ICM_AccelX', 'ICM_AccelY', 'ICM_AccelZ'],
         'icm_gyro': ['ICM_GyroX', 'ICM_GyroY', 'ICM_GyroZ'],
         'icm_mag': ['ICM_MagX', 'ICM_MagY', 'ICM_MagZ'],
-        'icm_other': ['ICM_Temp'] # Removed ICM_Q0 to Q3 as they are not in the mapping
+        'icm_other': ['ICM_Temp'], # Removed ICM_Q0 to Q3 as they are not in the mapping
+        'quaternion': ['Q0', 'Q1', 'Q2', 'Q3'] # Added quaternion group
     }
 
     def __init__(self, mapping_filepath: str = "data_mapping.json"):

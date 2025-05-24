@@ -26,10 +26,11 @@ except ImportError:
 import numpy as np
 import pandas as pd
 import pyqtgraph as pg
+import pyqtgraph.opengl as gl # Ensure this is present, it was already but good to double check
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
-import pyqtgraph.opengl as gl
+
 
 # Import our modules
 from flight_data_parser import FlightDataParser
@@ -335,6 +336,12 @@ class MainWindow(QMainWindow):
         # Current connection status
         self.connected = False
 
+        # Initialize Attitude3DWidget
+        self.attitude_3d_widget = Attitude3DWidget()
+        # Initialize quaternion data array
+        self.quaternions = np.array([]).reshape(0, 4)
+
+
     # --- Implementation of methods that now handle RealTimePlotWidget's logic ---
     def handle_new_data_point(self, data_point: Dict):
         """Handles a new data point, updates arrays, status, and plots."""
@@ -430,6 +437,30 @@ class MainWindow(QMainWindow):
             self.refresh_realtime_plots()
             if len(self.latitudes) > 0 and len(self.longitudes) > 0:
                  self.update_map_content()
+
+            # Handle quaternion data for 3D attitude
+            q_keys = ['Q0', 'Q1', 'Q2', 'Q3']
+            if all(k in data_point and data_point[k] is not None for k in q_keys):
+                q_new = np.array([[data_point['Q0'], data_point['Q1'], data_point['Q2'], data_point['Q3']]])
+                if self.quaternions.shape[0] == 0:
+                    self.quaternions = q_new
+                else:
+                    self.quaternions = np.vstack([self.quaternions, q_new])
+                
+                # Update 3D attitude display
+                if hasattr(self, 'attitude_3d_widget') and self.attitude_3d_widget:
+                    self.attitude_3d_widget.update_attitude(data_point['Q0'], data_point['Q1'], data_point['Q2'], data_point['Q3'])
+            elif len(self.quaternions) > 0: # If current packet lacks quaternions, append last known to maintain array length
+                self.quaternions = np.vstack([self.quaternions, self.quaternions[-1]])
+
+
+            # Limit data arrays to max_points (including quaternions)
+            if len(self.timestamps) > self.max_points: # Assuming timestamps is the reference for length
+                # self.timestamps is already truncated earlier in the original code
+                # We only need to ensure other arrays that might grow independently or conditionally are truncated
+                if self.quaternions.shape[0] > self.max_points:
+                     self.quaternions = self.quaternions[-self.max_points:]
+                # Other arrays like kx134_accel, icm_accel, etc., are already truncated in the original code.
 
         except Exception as e:
             print(f"Error in MainWindow.handle_new_data_point: {e}")
@@ -556,6 +587,7 @@ class MainWindow(QMainWindow):
             self.icm_accel = np.array([]).reshape(0, 3)
             self.icm_gyro = np.array([]).reshape(0, 3)
             self.icm_temps = np.array([]) # ICM
+            self.quaternions = np.array([]).reshape(0, 4) # Clear quaternion data
 
             # Clear plot curves
             self.altitude_curve.clear()
@@ -586,6 +618,11 @@ class MainWindow(QMainWindow):
             
             # Call refresh to ensure plots are visually empty
             self.refresh_realtime_plots() 
+            
+            # Reset 3D attitude display
+            if hasattr(self, 'attitude_3d_widget') and self.attitude_3d_widget:
+                self.attitude_3d_widget.reset_view()
+
             print("MainWindow: Real-time plots and data cleared.")
         except Exception as e:
             print(f"Error in MainWindow.clear_realtime_plots: {e}")
@@ -787,16 +824,17 @@ class MainWindow(QMainWindow):
 
         # 2. Create QDockWidgets for each plot/item
         dock_definitions = [
+            ("GPS Map", self.map_view_widget, Qt.TopDockWidgetArea),
             ("Altitude", self.altitude_plot_widget, Qt.TopDockWidgetArea),
-            ("Speed", self.speed_plot_widget, Qt.TopDockWidgetArea),
-            ("Pressure", self.pressure_plot_widget, Qt.LeftDockWidgetArea),
-            ("Temperature", self.temperature_plot_widget, Qt.LeftDockWidgetArea),
-            ("KX134 Accel", self.kx134_plot_widget, Qt.RightDockWidgetArea),
-            ("ICM Accel", self.icm_accel_plot_widget, Qt.RightDockWidgetArea),
-            ("ICM Gyro", self.icm_gyro_plot_widget, Qt.BottomDockWidgetArea),
-            ("GPS Map", self.map_view_widget, Qt.TopDockWidgetArea), # Often prominent
+            ("Speed", self.speed_plot_widget, Qt.TopDockWidgetArea), # Will be tabbed with Altitude
+            ("3D Attitude", self.attitude_3d_widget, Qt.RightDockWidgetArea),
+            ("KX134 Accel", self.kx134_plot_widget, Qt.LeftDockWidgetArea), # Motion Sensors group
+            ("ICM Accel", self.icm_accel_plot_widget, Qt.LeftDockWidgetArea),   # Motion Sensors group
+            ("ICM Gyro", self.icm_gyro_plot_widget, Qt.LeftDockWidgetArea),     # Motion Sensors group
+            ("Pressure", self.pressure_plot_widget, Qt.LeftDockWidgetArea),    # Environmental Sensors group
+            ("Temperature", self.temperature_plot_widget, Qt.LeftDockWidgetArea), # Environmental Sensors group
             ("Status Panel", status_panel_container, Qt.BottomDockWidgetArea),
-            ("Controls Panel", controls_panel_container, Qt.BottomDockWidgetArea)
+            ("Controls Panel", controls_panel_container, Qt.BottomDockWidgetArea) # Will be tabbed with Status
         ]
         
         self.plot_docks = {} # Store docks for potential later manipulation
@@ -809,9 +847,24 @@ class MainWindow(QMainWindow):
             self.addDockWidget(initial_area, dock)
             self.plot_docks[title] = dock
         
-        # Example of tabifying some docks (optional, can be user-driven)
-        # self.tabifyDockWidget(self.plot_docks["KX134 Accel"], self.plot_docks["ICM Accel"])
-        # self.tabifyDockWidget(self.plot_docks["Pressure"], self.plot_docks["Temperature"])
+        # Apply tabifications for a cleaner default layout
+        # Group Altitude and Speed
+        if "Altitude" in self.plot_docks and "Speed" in self.plot_docks:
+            self.tabifyDockWidget(self.plot_docks["Altitude"], self.plot_docks["Speed"])
+
+        # Group Motion Sensors (KX134, ICM Accel, ICM Gyro)
+        if "KX134 Accel" in self.plot_docks and "ICM Accel" in self.plot_docks:
+            self.tabifyDockWidget(self.plot_docks["KX134 Accel"], self.plot_docks["ICM Accel"])
+        if "ICM Accel" in self.plot_docks and "ICM Gyro" in self.plot_docks: # Tab ICM Gyro with the ICM Accel tab
+            self.tabifyDockWidget(self.plot_docks["ICM Accel"], self.plot_docks["ICM Gyro"])
+
+        # Group Environmental Sensors (Pressure, Temperature)
+        if "Pressure" in self.plot_docks and "Temperature" in self.plot_docks:
+            self.tabifyDockWidget(self.plot_docks["Pressure"], self.plot_docks["Temperature"])
+
+        # Group Status and Controls panels
+        if "Status Panel" in self.plot_docks and "Controls Panel" in self.plot_docks:
+            self.tabifyDockWidget(self.plot_docks["Status Panel"], self.plot_docks["Controls Panel"])
 
         # Add the realtime_tab_page to the main QTabWidget
         self.tabs.addTab(realtime_tab_page, "Real-time Visualization")
@@ -1139,6 +1192,103 @@ class MainWindow(QMainWindow):
             self.disconnect()
         
         event.accept()
+
+# Attitude 3D Widget Class (Copied and adapted from flight_visualizer.py)
+class Attitude3DWidget(gl.GLViewWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # self.setWindowTitle('3D Attitude') # Title is handled by DockWidget
+        # self.setGeometry(100, 100, 800, 600) # Geometry is handled by layout/docking
+
+        # Create coordinate system grids
+        xgrid = gl.GLGridItem()
+        ygrid = gl.GLGridItem()
+        zgrid = gl.GLGridItem()
+        
+        # Rotate y and z grids
+        ygrid.rotate(90, 0, 1, 0)
+        zgrid.rotate(90, 1, 0, 0)
+        
+        # Set grid sizes and add to view
+        for grid in (xgrid, ygrid, zgrid):
+            grid.setSize(x=10, y=10, z=10) # Size of the grid lines
+            grid.setSpacing(x=1, y=1, z=1) # Spacing between grid lines
+            self.addItem(grid)
+        
+        # Create reference frame axes (static) - slightly shorter than body axes for distinction
+        ref_x = gl.GLLinePlotItem(pos=np.array([[0,0,0], [1.5,0,0]]), color=(0.7,0.7,0.7,1), width=2) # Grey
+        ref_y = gl.GLLinePlotItem(pos=np.array([[0,0,0], [0,1.5,0]]), color=(0.7,0.7,0.7,1), width=2) # Grey
+        ref_z = gl.GLLinePlotItem(pos=np.array([[0,0,0], [0,0,1.5]]), color=(0.7,0.7,0.7,1), width=2) # Grey
+        
+        self.addItem(ref_x)
+        self.addItem(ref_y)
+        self.addItem(ref_z)
+        
+        # Create body frame axes (will be rotated)
+        self.body_x = gl.GLLinePlotItem(pos=np.array([[0,0,0], [2,0,0]]), color=(1,0,0,1), width=3) # Red
+        self.body_y = gl.GLLinePlotItem(pos=np.array([[0,0,0], [0,2,0]]), color=(0,1,0,1), width=3) # Green
+        self.body_z = gl.GLLinePlotItem(pos=np.array([[0,0,0], [0,0,2]]), color=(0,0,1,1), width=3) # Blue
+        
+        self.addItem(self.body_x)
+        self.addItem(self.body_y)
+        self.addItem(self.body_z)
+        
+        # Set initial camera position for better view
+        self.setCameraPosition(distance=15, elevation=25, azimuth=45)
+
+    def _quaternion_to_rotation_matrix(self, q0, q1, q2, q3):
+        """Convert quaternion (w, x, y, z) to 3x3 rotation matrix."""
+        # Note: Standard pyqtgraph/numpy uses (w, x, y, z) for Transform3D.setRotation/rotate.
+        # If input is (x,y,z,w) it needs to be q0=w, q1=x, q2=y, q3=z.
+        # The formula used here is for q = q0 + i*q1 + j*q2 + k*q3 (scalar-first)
+        
+        # Normalizing the quaternion is good practice if not guaranteed normalized
+        norm = np.sqrt(q0**2 + q1**2 + q2**2 + q3**2)
+        if norm == 0: norm = 1 # Avoid division by zero, identity if magnitude is zero
+        q0, q1, q2, q3 = q0/norm, q1/norm, q2/norm, q3/norm
+
+        # Rotation matrix elements
+        r11 = q0**2 + q1**2 - q2**2 - q3**2
+        r12 = 2 * (q1*q2 - q0*q3)
+        r13 = 2 * (q1*q3 + q0*q2)
+        r21 = 2 * (q1*q2 + q0*q3)
+        r22 = q0**2 - q1**2 + q2**2 - q3**2
+        r23 = 2 * (q2*q3 - q0*q1)
+        r31 = 2 * (q1*q3 - q0*q2)
+        r32 = 2 * (q2*q3 + q0*q1)
+        r33 = q0**2 - q1**2 - q2**2 + q3**2
+        
+        rot_matrix = np.array([
+            [r11, r12, r13],
+            [r21, r22, r23],
+            [r31, r32, r33]
+        ])
+        return rot_matrix
+
+    def update_attitude(self, q0, q1, q2, q3):
+        """Update the 3D attitude display with new quaternion (w, x, y, z)."""
+        R = self._quaternion_to_rotation_matrix(q0, q1, q2, q3)
+        
+        # Define standard body axes endpoints
+        axis_len = 2.0
+        x_axis_body = np.array([axis_len, 0, 0])
+        y_axis_body = np.array([0, axis_len, 0])
+        z_axis_body = np.array([0, 0, axis_len])
+        
+        # Rotate these axes by R
+        x_end_rotated = np.dot(R, x_axis_body)
+        y_end_rotated = np.dot(R, y_axis_body)
+        z_end_rotated = np.dot(R, z_axis_body)
+        
+        # Update plot items
+        self.body_x.setData(pos=np.array([[0,0,0], x_end_rotated]))
+        self.body_y.setData(pos=np.array([[0,0,0], y_end_rotated]))
+        self.body_z.setData(pos=np.array([[0,0,0], z_end_rotated]))
+
+    def reset_view(self):
+        """Resets the view to the default orientation (identity quaternion) and camera angle."""
+        self.update_attitude(1.0, 0.0, 0.0, 0.0) # Default quaternion (w=1, x=0, y=0, z=0)
+        self.setCameraPosition(distance=15, elevation=25, azimuth=45)
 
 
 def main():
