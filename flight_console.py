@@ -22,6 +22,7 @@ try:
     from PyQt5.QtWebEngineWidgets import QWebEngineView
 except ImportError:
     print("QtWebEngineWidgets not available. Google Maps integration will be disabled.")
+    QWebEngineView = None # Define as None if import fails
 
 import numpy as np
 import pandas as pd
@@ -490,8 +491,8 @@ class MainWindow(QMainWindow):
         try:
             if not hasattr(self, 'map_view_widget') or self.map_view_widget is None: return
 
-            # If it's the QWebEngineView
-            if isinstance(self.map_view_widget, QWebEngineView):
+            # If QWebEngineView was successfully imported and it's the QWebEngineView
+            if QWebEngineView is not None and isinstance(self.map_view_widget, QWebEngineView):
                 if not hasattr(self.map_view_widget, 'setHtml'): return # Should exist, but defensive
                 
                 lat_list = self.latitudes.tolist()
@@ -579,7 +580,7 @@ class MainWindow(QMainWindow):
 
             # Clear map (WebEngineView or fallback)
             if hasattr(self, 'map_view_widget'):
-                if isinstance(self.map_view_widget, QWebEngineView):
+                if QWebEngineView is not None and isinstance(self.map_view_widget, QWebEngineView):
                     self.map_view_widget.setHtml("") 
                 elif hasattr(self, 'gps_fallback_plot_item') and self.gps_fallback_plot_item:
                     self.gps_fallback_plot_item.clear()
@@ -748,8 +749,10 @@ class MainWindow(QMainWindow):
 
         # GPS Map View (attribute of MainWindow)
         try:
-            from PyQt5.QtWebEngineWidgets import QWebEngineView
-            self.map_view_widget = QWebEngineView()
+            if QWebEngineView is not None:
+                self.map_view_widget = QWebEngineView()
+            else: # Fallback if QWebEngineView was not imported
+                raise ImportError("QWebEngineView not available") 
         except (ImportError, Exception):
             print("DEBUG: QWebEngineView not available, falling back to GPS plot for docking")
             self.map_view_widget = pg.PlotWidget(title="GPS Position (Plot Fallback)")
