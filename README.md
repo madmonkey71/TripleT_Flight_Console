@@ -8,6 +8,12 @@ TripleT Flight Console is a Python application designed to visualize and analyze
 
 The application provides a modular structure that can be used with either a graphical user interface (GUI) or a command-line interface (CLI), making it versatile for various usage scenarios and platforms.
 
+**Project Status**: On Hold
+I'm working on a different idea for the visualisation of data from the bebug that uses webserial and is integrated into the main firmware project.
+While I work on this I've pause work here so that I can focus on a single method of gathering test data for use. I'm almost certainly going to be moving back to this project down the track as I don't think webserial will be a good choice for receiving data for radio or other methods. Only time and testing will tell.
+For now if you want to take a look grab the latest beta from the flight firmware (link below) and try the web visualiser.
+[TripleT Flight Firmware Beta 0.46](https://github.com/madmonkey71/TripleT-Flight-Firmware/tree/beta-0.46)
+
 ## Features
 
 - **Data Parsing**: Load and parse flight data from CSV files or streaming sources
@@ -141,8 +147,3 @@ if ports:
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Acknowledgments
-
-- This application was developed for the Triple T team's model aviation and rocketry projects.
-- Special thanks to all the contributors and testers who made this project possible.
